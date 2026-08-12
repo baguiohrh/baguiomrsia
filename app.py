@@ -14,10 +14,10 @@ st.title("BAGUIO SIA Accomplishment Dashboard")
 # --- DATA LOADING ---
 SHEET_ID = "1Gh1LYOgacvRs_QwNa7xFHAGyfTzquQ0exqe3VOOYANs"
 
-# Main accomplishments sheet CSV URL
+# CSV Export URLs
 CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
-# Target sheet CSV URL (using gviz endpoint for reliable tab name export)
 TARGET_CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Target"
+DATA_AS_OF_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet=dataAsOf"
 
 @st.cache_data(ttl=600)
 def load_data():
@@ -41,7 +41,6 @@ def load_target_data():
         df_target.columns = df_target.columns.astype(str).str.strip()
         return df_target
     except Exception as e:
-        # Fallback to secondary URL parameter format
         try:
             alt_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&sheet=Target"
             df_target = pd.read_csv(alt_url)
@@ -51,8 +50,35 @@ def load_target_data():
             st.warning(f"Note: Could not load 'Target' sheet. Details: {alt_e}")
             return pd.DataFrame()
 
+@st.cache_data(ttl=600)
+def load_data_as_of():
+    try:
+        # Load the dataAsOf sheet
+        df_as_of = pd.read_csv(DATA_AS_OF_URL, header=None)
+        # Extract Cell A2 (Row index 1, Col index 0) and Cell B2 (Row index 1, Col index 1)
+        extract_date = str(df_as_of.iloc[1, 0]).strip() if len(df_as_of) > 1 and len(df_as_of.columns) > 0 else ""
+        extract_time = str(df_as_of.iloc[1, 1]).strip() if len(df_as_of) > 1 and len(df_as_of.columns) > 1 else ""
+        return extract_date, extract_time
+    except Exception:
+        try:
+            alt_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&sheet=dataAsOf"
+            df_as_of = pd.read_csv(alt_url, header=None)
+            extract_date = str(df_as_of.iloc[1, 0]).strip() if len(df_as_of) > 1 and len(df_as_of.columns) > 0 else ""
+            extract_time = str(df_as_of.iloc[1, 1]).strip() if len(df_as_of) > 1 and len(df_as_of.columns) > 1 else ""
+            return extract_date, extract_time
+        except Exception:
+            return "", ""
+
 df_raw = load_data()
 df_target_raw = load_target_data()
+as_of_date, as_of_time = load_data_as_of()
+
+# --- DATA AS OF REMINDER BANNER ---
+timestamp_str = f"{as_of_date} {as_of_time}".strip()
+if timestamp_str and timestamp_str != "nan nan":
+    st.info(f"📌 **Data as of:** {timestamp_str} | *All data is subject to change without prior notice.*")
+else:
+    st.info("📌 *All data is subject to change without prior notice.*")
 
 if not df_raw.empty:
     # Identify key columns by position in main sheet
@@ -173,7 +199,7 @@ if not df_raw.empty:
 
     st.divider()
 
-    # --- SECTION 1: DAILY RESPONSE TRENDS (MOVED TO FIRST PART) ---
+    # --- SECTION 1: DAILY RESPONSE TRENDS ---
     st.header("Daily Response Trends")
 
     daily_vit_a = pd.DataFrame()
@@ -232,7 +258,7 @@ if not df_raw.empty:
 
     st.divider()
 
-    # --- SECTION 2: OVERALL METRIC SUMMARY (COMPACT SINGLE-ROW VIEW) ---
+    # --- SECTION 2: OVERALL METRIC SUMMARY (SINGLE-ROW VIEW) ---
     st.header("Overall Metric Summary")
     col_summary1, col_summary2, col_summary3 = st.columns(3)
 
