@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -12,13 +13,16 @@ st.title("BAGUIO SIA Accomplishment Dashboard")
 
 # --- DATA LOADING ---
 SHEET_ID = "1Gh1LYOgacvRs_QwNa7xFHAGyfTzquQ0exqe3VOOYANs"
+
+# Main accomplishments sheet CSV URL
 CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
+# Target sheet CSV URL (using gviz endpoint for reliable tab name export)
+TARGET_CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Target"
 
 @st.cache_data(ttl=600)
 def load_data():
     try:
         df = pd.read_csv(CSV_URL)
-        # Fix: Ensure all column headers are strings before stripping spaces
         df.columns = df.columns.astype(str).str.strip()
         
         # Convert Column I (Vaccination Date - 0-indexed column 8) to datetime
@@ -27,13 +31,31 @@ def load_data():
         
         return df
     except Exception as e:
-        st.error(f"Error loading data from Google Sheets: {e}")
+        st.error(f"Error loading main data from Google Sheets: {e}")
         return pd.DataFrame()
 
+@st.cache_data(ttl=600)
+def load_target_data():
+    try:
+        df_target = pd.read_csv(TARGET_CSV_URL)
+        df_target.columns = df_target.columns.astype(str).str.strip()
+        return df_target
+    except Exception as e:
+        # Fallback to secondary URL parameter format
+        try:
+            alt_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&sheet=Target"
+            df_target = pd.read_csv(alt_url)
+            df_target.columns = df_target.columns.astype(str).str.strip()
+            return df_target
+        except Exception as alt_e:
+            st.warning(f"Note: Could not load 'Target' sheet. Details: {alt_e}")
+            return pd.DataFrame()
+
 df_raw = load_data()
+df_target_raw = load_target_data()
 
 if not df_raw.empty:
-    # Identify key columns by position
+    # Identify key columns by position in main sheet
     col_bakuna = df_raw.columns[5]    # Column F (Bakuna Center Name)
     col_barangay = df_raw.columns[7]  # Column H (Barangay Name)
     col_date = df_raw.columns[8]      # Column I (Vaccination Date)
@@ -67,7 +89,7 @@ if not df_raw.empty:
     else:
         selected_date_range = []
 
-    # --- APPLY FILTERS ---
+    # --- APPLY FILTERS TO ACCOMPLISHMENT DATA ---
     filtered_df = df_raw.copy()
 
     if selected_bakuna:
@@ -83,10 +105,21 @@ if not df_raw.empty:
             (filtered_df[col_date].dt.date <= end_date)
         ]
 
+    # --- APPLY FILTERS TO TARGET DATA ---
+    filtered_target_df = df_target_raw.copy()
+    if not filtered_target_df.empty:
+        t_bakuna_col = next((c for c in filtered_target_df.columns if "bakuna" in c.lower()), None)
+        t_barangay_col = next((c for c in filtered_target_df.columns if "barangay" in c.lower() and "code" not in c.lower()), None)
+
+        if selected_bakuna and t_bakuna_col:
+            filtered_target_df = filtered_target_df[filtered_target_df[t_bakuna_col].astype(str).isin(selected_bakuna)]
+        if selected_barangay and t_barangay_col:
+            filtered_target_df = filtered_target_df[filtered_target_df[t_barangay_col].astype(str).isin(selected_barangay)]
+
     # Convert response column safely to string
     response_series = filtered_df[col_response].astype(str)
 
-    # --- TARGET COLUMNS SELECTION ---
+    # --- TARGET COLUMNS SELECTION (Main Sheet) ---
     vit_a_target_cols = [
         c for c in dose_cols 
         if "Vit A" in c and any(age in c for age in ["6-11", "12-59"])
@@ -102,7 +135,7 @@ if not df_raw.empty:
         if "Zero" in c and any(age in c for age in ["6-12", "13-23", "24-59"])
     ]
 
-    # Combine MR Doses and MR Zero Doses into one complete MR metric list
+    # Combine MR Doses and MR Zero Doses
     all_mr_cols = mr_dose_cols + mr_zero_cols
 
     # --- GRAND TOTAL CARDS ---
@@ -125,7 +158,7 @@ if not df_raw.empty:
         for c in vit_a_target_cols:
             vit_a_total += pd.to_numeric(vit_a_df[c], errors='coerce').sum()
 
-    # Calculate Total MR Response (MR Doses + MR Zero Doses)
+    # Calculate Total MR Response
     mr_total = 0
     if all_mr_cols:
         for c in all_mr_cols:
@@ -216,97 +249,208 @@ if not df_raw.empty:
 
     st.divider()
 
-    # --- SECTION 2: BARANGAY BREAKDOWN CHARTS ---
+    # --- SECTION 2: BARANGAY BREAKDOWN CHARTS (PIE CHARTS) ---
     st.header("Accomplishment by Barangay")
     b_left_col, b_right_col = st.columns(2)
 
-    # BARANGAY - LEFT COLUMN: Vitamin A
     with b_left_col:
-        st.subheader("Vitamin A by Barangay")
+        st.subheader("Vitamin A Distribution by Barangay")
         if vit_a_target_cols and not vit_a_df.empty:
-            vit_a_bgy = vit_a_df.groupby(col_barangay)[vit_a_target_cols].apply(
-                lambda x: x.apply(pd.to_numeric, errors='coerce').sum()
-            ).reset_index()
+            vit_a_bgy_df = vit_a_df.copy()
+            vit_a_bgy_df['Total_Vit_A'] = vit_a_bgy_df[vit_a_target_cols].apply(
+                pd.to_numeric, errors='coerce'
+            ).sum(axis=1)
+            
+            vit_a_bgy_summary = vit_a_bgy_df.groupby(col_barangay)['Total_Vit_A'].sum().reset_index()
+            vit_a_bgy_summary = vit_a_bgy_summary[vit_a_bgy_summary['Total_Vit_A'] > 0]
 
-            vit_a_bgy_melted = vit_a_bgy.melt(
-                id_vars=[col_barangay],
-                value_vars=vit_a_target_cols,
-                var_name="Age Group",
-                value_name="Total Administered"
-            )
+            if not vit_a_bgy_summary.empty:
+                fig_pie_vit_a = px.pie(
+                    vit_a_bgy_summary,
+                    names=col_barangay,
+                    values='Total_Vit_A',
+                    title="Vitamin A Share per Barangay",
+                    hole=0.4,
+                    color_discrete_sequence=px.colors.qualitative.Set2
+                )
+                fig_pie_vit_a.update_traces(textposition='inside', textinfo='percent+label')
+                st.plotly_chart(fig_pie_vit_a, use_container_width=True)
+            else:
+                st.info("No Vitamin A data recorded for the selected barangays.")
 
-            fig_bgy_vit_a = px.bar(
-                vit_a_bgy_melted,
-                x=col_barangay,
-                y="Total Administered",
-                color="Age Group",
-                barmode="group",
-                text="Total Administered",
-                title="Vitamin A Coverage per Barangay",
-                color_discrete_sequence=px.colors.qualitative.Set2
-            )
-            fig_bgy_vit_a.update_layout(xaxis_title="Barangay", yaxis_title="Total Administered")
-            st.plotly_chart(fig_bgy_vit_a, use_container_width=True)
-
-    # BARANGAY - RIGHT COLUMN: Measles-Rubella (MR)
     with b_right_col:
-        st.subheader("Measles-Rubella (MR) by Barangay")
+        st.subheader("Measles-Rubella (MR) Distribution by Barangay")
         if mr_dose_cols and not mr_df.empty:
-            mr_bgy = mr_df.groupby(col_barangay)[mr_dose_cols].apply(
-                lambda x: x.apply(pd.to_numeric, errors='coerce').sum()
-            ).reset_index()
+            mr_bgy_df = mr_df.copy()
+            mr_bgy_df['Total_MR_Doses'] = mr_bgy_df[mr_dose_cols].apply(
+                pd.to_numeric, errors='coerce'
+            ).sum(axis=1)
+            
+            mr_bgy_summary = mr_bgy_df.groupby(col_barangay)['Total_MR_Doses'].sum().reset_index()
+            mr_bgy_summary = mr_bgy_summary[mr_bgy_summary['Total_MR_Doses'] > 0]
 
-            mr_bgy_melted = mr_bgy.melt(
-                id_vars=[col_barangay],
-                value_vars=mr_dose_cols,
-                var_name="Age Group",
-                value_name="Total Administered"
-            )
-
-            fig_bgy_mr = px.bar(
-                mr_bgy_melted,
-                x=col_barangay,
-                y="Total Administered",
-                color="Age Group",
-                barmode="group",
-                text="Total Administered",
-                title="MR Doses Administered per Barangay",
-                color_discrete_sequence=px.colors.qualitative.Pastel
-            )
-            fig_bgy_mr.update_layout(xaxis_title="Barangay", yaxis_title="Total Administered")
-            st.plotly_chart(fig_bgy_mr, use_container_width=True)
+            if not mr_bgy_summary.empty:
+                fig_pie_mr = px.pie(
+                    mr_bgy_summary,
+                    names=col_barangay,
+                    values='Total_MR_Doses',
+                    title="MR Doses Share per Barangay",
+                    hole=0.4,
+                    color_discrete_sequence=px.colors.qualitative.Pastel
+                )
+                fig_pie_mr.update_traces(textposition='inside', textinfo='percent+label')
+                st.plotly_chart(fig_pie_mr, use_container_width=True)
 
         if mr_zero_cols and not mr_df.empty:
-            mr_zero_bgy = mr_df.groupby(col_barangay)[mr_zero_cols].apply(
-                lambda x: x.apply(pd.to_numeric, errors='coerce').sum()
-            ).reset_index()
+            mr_zero_bgy_df = mr_df.copy()
+            mr_zero_bgy_df['Total_MR_Zero'] = mr_zero_bgy_df[mr_zero_cols].apply(
+                pd.to_numeric, errors='coerce'
+            ).sum(axis=1)
+            
+            mr_zero_bgy_summary = mr_zero_bgy_df.groupby(col_barangay)['Total_MR_Zero'].sum().reset_index()
+            mr_zero_bgy_summary = mr_zero_bgy_summary[mr_zero_bgy_summary['Total_MR_Zero'] > 0]
 
-            mr_zero_bgy_melted = mr_zero_bgy.melt(
-                id_vars=[col_barangay],
-                value_vars=mr_zero_cols,
-                var_name="Age Group",
-                value_name="Total Administered"
-            )
-
-            fig_bgy_mr_zero = px.bar(
-                mr_zero_bgy_melted,
-                x=col_barangay,
-                y="Total Administered",
-                color="Age Group",
-                barmode="group",
-                text="Total Administered",
-                title="MR Zero Doses Administered per Barangay",
-                color_discrete_sequence=px.colors.qualitative.Safe
-            )
-            fig_bgy_mr_zero.update_layout(xaxis_title="Barangay", yaxis_title="Total Administered")
-            st.plotly_chart(fig_bgy_mr_zero, use_container_width=True)
+            if not mr_zero_bgy_summary.empty:
+                fig_pie_mr_zero = px.pie(
+                    mr_zero_bgy_summary,
+                    names=col_barangay,
+                    values='Total_MR_Zero',
+                    title="MR Zero Doses Share per Barangay",
+                    hole=0.4,
+                    color_discrete_sequence=px.colors.qualitative.Safe
+                )
+                fig_pie_mr_zero.update_traces(textposition='inside', textinfo='percent+label')
+                st.plotly_chart(fig_pie_mr_zero, use_container_width=True)
 
     st.divider()
 
-    # --- SECTION 3: DAILY RESPONSE TRENDS (LINE CHART) ---
+    # --- SECTION 3: ACCOMPLISHMENT PERCENTAGE VS TARGET (GAUGE CHARTS) ---
+    st.header("Target Population vs Accomplishment Gauges")
+
+    if not filtered_target_df.empty:
+        # Helper to get target column safely by position or keyword
+        def safe_get_target_col(df, pos_idx, preferred_name_keyword):
+            if len(df.columns) > pos_idx:
+                return df.columns[pos_idx]
+            matched = [c for c in df.columns if preferred_name_keyword.lower() in c.lower()]
+            return matched[0] if matched else None
+
+        # Columns F (idx 5), I (idx 8), L (idx 11), O (idx 14) from "Target" sheet
+        col_t_6_59 = safe_get_target_col(filtered_target_df, 5, "6 - 59 months Total")
+        col_t_6_12 = safe_get_target_col(filtered_target_df, 8, "6 - 12 months Total")
+        col_t_13_23 = safe_get_target_col(filtered_target_df, 11, "13 - 23 months Total")
+        col_t_24_59 = safe_get_target_col(filtered_target_df, 14, "24 - 59 months Total")
+
+        # Sum targets from filtered "Target" sheet
+        t_val_6_12 = pd.to_numeric(filtered_target_df[col_t_6_12], errors='coerce').sum() if col_t_6_12 else 0
+        t_val_13_23 = pd.to_numeric(filtered_target_df[col_t_13_23], errors='coerce').sum() if col_t_13_23 else 0
+        t_val_24_59 = pd.to_numeric(filtered_target_df[col_t_24_59], errors='coerce').sum() if col_t_24_59 else 0
+        t_val_6_59 = pd.to_numeric(filtered_target_df[col_t_6_59], errors='coerce').sum() if col_t_6_59 else 0
+
+        # Calculate actual accomplishments from main sheet
+        cols_acc_6_12 = [c for c in dose_cols if any(kw in c for kw in ["6-12", "6 - 12", "6-11", "6 - 11"])]
+        cols_acc_13_23 = [c for c in dose_cols if any(kw in c for kw in ["13-23", "13 - 23", "12-23"])]
+        cols_acc_24_59 = [c for c in dose_cols if any(kw in c for kw in ["24-59", "24 - 59"])]
+
+        acc_val_6_12 = filtered_df[cols_acc_6_12].apply(pd.to_numeric, errors='coerce').sum().sum() if cols_acc_6_12 else 0
+        acc_val_13_23 = filtered_df[cols_acc_13_23].apply(pd.to_numeric, errors='coerce').sum().sum() if cols_acc_13_23 else 0
+        acc_val_24_59 = filtered_df[cols_acc_24_59].apply(pd.to_numeric, errors='coerce').sum().sum() if cols_acc_24_59 else 0
+        acc_val_6_59 = acc_val_6_12 + acc_val_13_23 + acc_val_24_59
+
+        target_summary_data = [
+            {"Title": "6 - 12 mos Total [Col I]", "Target": int(t_val_6_12), "Accomplishment": int(acc_val_6_12)},
+            {"Title": "13 - 23 mos Total [Col L]", "Target": int(t_val_13_23), "Accomplishment": int(acc_val_13_23)},
+            {"Title": "24 - 59 mos Total [Col O]", "Target": int(t_val_24_59), "Accomplishment": int(acc_val_24_59)},
+            {"Title": "6 - 59 mos Total [Col F]", "Target": int(t_val_6_59), "Accomplishment": int(acc_val_6_59)},
+        ]
+
+        # Function to generate individual gauge chart with custom thresholds and target line
+# Function to generate individual gauge chart with full, unabbreviated numbers
+        def create_gauge_chart(title, accomplishment, target):
+            pct = round((accomplishment / target * 100), 1) if target > 0 else 0
+            max_axis_val = max(target, accomplishment) * 1.15 if target > 0 else 100
+
+            fig = go.Figure(go.Indicator(
+                mode="gauge+number+delta",
+                value=accomplishment,
+                number={'valueformat': ',d'},  # Display full integer with commas (e.g., 12,345)
+                domain={'x': [0.05, 0.95], 'y': [0.05, 0.70]},
+                title={
+                    'text': f"<b>{title}</b><br><span style='font-size:0.85em;color:#475569'>{pct}% of Target ({target:,})</span>", 
+                    'font': {'size': 14},
+                    'align': 'center'
+                },
+                delta={
+                    'reference': target, 
+                    'relative': False, 
+                    'valueformat': ',d',  # Display full target difference with commas
+                    'increasing': {'color': "#16a34a"}
+                },
+                gauge={
+                    'axis': {
+                        'range': [0, max_axis_val], 
+                        'tickwidth': 1, 
+                        'tickcolor': "#334155",
+                        'tickformat': ',d' # Prevent tick labels from using 'k' notation
+                    },
+                    'bar': {'color': "#0284c7"},
+                    'bgcolor': "white",
+                    'borderwidth': 1.5,
+                    'bordercolor': "#cbd5e1",
+                    'steps': [
+                        {'range': [0, target * 0.5], 'color': '#fee2e2'},         # 0% - 50%: Red tint
+                        {'range': [target * 0.5, target * 0.9], 'color': '#fef3c7'}, # 50% - 90%: Yellow tint
+                        {'range': [target * 0.9, target], 'color': '#dcfce7'},      # 90% - 100%: Light green tint
+                        {'range': [target, max_axis_val], 'color': '#bbf7d0'}       # 100%+: Deep green tint
+                    ],
+                    'threshold': {
+                        'line': {'color': "#dc2626", 'width': 4},
+                        'thickness': 0.8,
+                        'value': target
+                    }
+                }
+            ))
+
+            fig.update_layout(
+                height=320,
+                margin=dict(l=35, r=35, t=60, b=40)
+            )
+            return fig
+
+				
+        # Render 2x2 Grid with explicit column gaps
+        g_col1, g_col2 = st.columns(2, gap="large")
+        
+        with g_col1:
+            st.plotly_chart(
+                create_gauge_chart(target_summary_data[0]["Title"], target_summary_data[0]["Accomplishment"], target_summary_data[0]["Target"]), 
+                use_container_width=True
+            )
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.plotly_chart(
+                create_gauge_chart(target_summary_data[2]["Title"], target_summary_data[2]["Accomplishment"], target_summary_data[2]["Target"]), 
+                use_container_width=True
+            )
+
+        with g_col2:
+            st.plotly_chart(
+                create_gauge_chart(target_summary_data[1]["Title"], target_summary_data[1]["Accomplishment"], target_summary_data[1]["Target"]), 
+                use_container_width=True
+            )
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.plotly_chart(
+                create_gauge_chart(target_summary_data[3]["Title"], target_summary_data[3]["Accomplishment"], target_summary_data[3]["Target"]), 
+                use_container_width=True
+            )
+
+    else:
+        st.info("The 'Target' worksheet could not be loaded or contains no rows. Ensure the Google Sheet tab is named 'Target' and is shared publicly.")
+
+    st.divider()
+
+    # --- SECTION 4: DAILY RESPONSE TRENDS (LINE CHART) ---
     st.header("Daily Response Trends")
 
-    # Group Vitamin A data by Date
     daily_vit_a = pd.DataFrame()
     if vit_a_target_cols and not vit_a_df.empty:
         vit_a_df_clean = vit_a_df.dropna(subset=[col_date]).copy()
@@ -315,7 +459,6 @@ if not df_raw.empty:
         ).sum(axis=1)
         daily_vit_a = vit_a_df_clean.groupby(vit_a_df_clean[col_date].dt.date)['Daily_Vit_A_Total'].sum().reset_index()
 
-    # Group MR data by Date
     daily_mr = pd.DataFrame()
     if all_mr_cols and not mr_df.empty:
         mr_df_clean = mr_df.dropna(subset=[col_date]).copy()
@@ -324,12 +467,10 @@ if not df_raw.empty:
         ).sum(axis=1)
         daily_mr = mr_df_clean.groupby(mr_df_clean[col_date].dt.date)['Daily_MR_Total'].sum().reset_index()
 
-    # Merge Daily Totals into a single DataFrame for Plotly
     if not daily_vit_a.empty or not daily_mr.empty:
         daily_trend_df = pd.merge(daily_vit_a, daily_mr, on=col_date, how='outer').fillna(0)
         daily_trend_df = daily_trend_df.sort_values(by=col_date)
 
-        # Melt data for Plotly multi-line rendering
         daily_melted = daily_trend_df.melt(
             id_vars=[col_date],
             value_vars=['Daily_Vit_A_Total', 'Daily_MR_Total'],
@@ -337,7 +478,6 @@ if not df_raw.empty:
             value_name='Total Administered'
         )
 
-        # Map clean display names for the legend
         daily_melted['Response Type'] = daily_melted['Response Type'].map({
             'Daily_Vit_A_Total': 'Vitamin A Response',
             'Daily_MR_Total': 'Measles-Rubella (MR) Response'
@@ -351,8 +491,8 @@ if not df_raw.empty:
             markers=True,
             title='Daily Total Response Over Time',
             color_discrete_map={
-                'Vitamin A Response': '#2ca02c',          # Green line
-                'Measles-Rubella (MR) Response': '#1f77b4'  # Blue line
+                'Vitamin A Response': '#2ca02c',
+                'Measles-Rubella (MR) Response': '#1f77b4'
             }
         )
         fig_line.update_layout(
