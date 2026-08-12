@@ -173,83 +173,275 @@ if not df_raw.empty:
 
     st.divider()
 
-    # --- SECTION 1: OVERALL METRIC SUMMARY CHARTS ---
+    # --- SECTION 1: DAILY RESPONSE TRENDS (MOVED TO FIRST PART) ---
+    st.header("Daily Response Trends")
+
+    daily_vit_a = pd.DataFrame()
+    if vit_a_target_cols and not vit_a_df.empty:
+        vit_a_df_clean = vit_a_df.dropna(subset=[col_date]).copy()
+        vit_a_df_clean['Daily_Vit_A_Total'] = vit_a_df_clean[vit_a_target_cols].apply(
+            pd.to_numeric, errors='coerce'
+        ).sum(axis=1)
+        daily_vit_a = vit_a_df_clean.groupby(vit_a_df_clean[col_date].dt.date)['Daily_Vit_A_Total'].sum().reset_index()
+
+    daily_mr = pd.DataFrame()
+    if all_mr_cols and not mr_df.empty:
+        mr_df_clean = mr_df.dropna(subset=[col_date]).copy()
+        mr_df_clean['Daily_MR_Total'] = mr_df_clean[all_mr_cols].apply(
+            pd.to_numeric, errors='coerce'
+        ).sum(axis=1)
+        daily_mr = mr_df_clean.groupby(mr_df_clean[col_date].dt.date)['Daily_MR_Total'].sum().reset_index()
+
+    if not daily_vit_a.empty or not daily_mr.empty:
+        daily_trend_df = pd.merge(daily_vit_a, daily_mr, on=col_date, how='outer').fillna(0)
+        daily_trend_df = daily_trend_df.sort_values(by=col_date)
+
+        daily_melted = daily_trend_df.melt(
+            id_vars=[col_date],
+            value_vars=['Daily_Vit_A_Total', 'Daily_MR_Total'],
+            var_name='Response Type',
+            value_name='Total Administered'
+        )
+
+        daily_melted['Response Type'] = daily_melted['Response Type'].map({
+            'Daily_Vit_A_Total': 'Vitamin A Response',
+            'Daily_MR_Total': 'Measles-Rubella (MR) Response'
+        })
+
+        fig_line = px.line(
+            daily_melted,
+            x=col_date,
+            y='Total Administered',
+            color='Response Type',
+            markers=True,
+            title='Daily Total Response Over Time',
+            color_discrete_map={
+                'Vitamin A Response': '#2ca02c',
+                'Measles-Rubella (MR) Response': '#1f77b4'
+            }
+        )
+        fig_line.update_layout(
+            xaxis_title="Date",
+            yaxis_title="Total Administered",
+            hovermode="x unified",
+            height=380
+        )
+        st.plotly_chart(fig_line, use_container_width=True)
+    else:
+        st.info("No daily date data available to render line chart trends.")
+
+    st.divider()
+
+    # --- SECTION 2: OVERALL METRIC SUMMARY (COMPACT SINGLE-ROW VIEW) ---
     st.header("Overall Metric Summary")
-    left_col, right_col = st.columns(2)
+    col_summary1, col_summary2, col_summary3 = st.columns(3)
 
-    # LEFT COLUMN: Vitamin A
-    with left_col:
-        st.subheader("Vitamin A Response")
-
+    # 1. Vitamin A Summary Chart
+    with col_summary1:
         if vit_a_target_cols:
             vit_a_totals = []
             for col in vit_a_target_cols:
                 val = pd.to_numeric(vit_a_df[col], errors='coerce').sum()
-                vit_a_totals.append({"Metric": col, "Total Administered": int(val)})
+                vit_a_totals.append({"Metric": col.replace("Vitamin A ", "").replace(" Total", ""), "Total": int(val)})
 
             chart_data_vit_a = pd.DataFrame(vit_a_totals)
 
             fig_vit_a = px.bar(
                 chart_data_vit_a,
                 x="Metric",
-                y="Total Administered",
+                y="Total",
                 color="Metric",
-                text="Total Administered",
-                title="Vitamin A Coverage",
+                text="Total",
+                title="<b>Vitamin A</b>",
                 color_discrete_sequence=px.colors.qualitative.Set2
             )
-            fig_vit_a.update_layout(xaxis_title="", yaxis_title="Total Administered", showlegend=False)
+            fig_vit_a.update_traces(textposition='auto')
+            fig_vit_a.update_layout(
+                xaxis_title="", 
+                yaxis_title="Doses", 
+                showlegend=False, 
+                height=260,
+                margin=dict(l=10, r=10, t=40, b=10)
+            )
             st.plotly_chart(fig_vit_a, use_container_width=True)
-        else:
-            st.info("No Vitamin A columns found.")
 
-    # RIGHT COLUMN: Measles-Rubella (MR)
-    with right_col:
-        st.subheader("Measles-Rubella (MR) Response")
-
+    # 2. MR Doses Chart
+    with col_summary2:
         if mr_dose_cols:
             mr_totals = []
             for col in mr_dose_cols:
                 val = pd.to_numeric(mr_df[col], errors='coerce').sum()
-                mr_totals.append({"Age Group": col, "Total Administered": int(val)})
+                mr_totals.append({"Age": col.replace("MR ", "").replace(" Total", ""), "Total": int(val)})
 
             chart_data_mr = pd.DataFrame(mr_totals)
 
             fig_mr = px.bar(
                 chart_data_mr,
-                x="Age Group",
-                y="Total Administered",
-                color="Age Group",
-                text="Total Administered",
-                title="MR Doses Administered by Age Group",
+                x="Age",
+                y="Total",
+                color="Age",
+                text="Total",
+                title="<b>MR Doses</b>",
                 color_discrete_sequence=px.colors.qualitative.Pastel
             )
-            fig_mr.update_layout(xaxis_title="", yaxis_title="Total Administered", showlegend=False)
+            fig_mr.update_traces(textposition='auto')
+            fig_mr.update_layout(
+                xaxis_title="", 
+                yaxis_title="Doses", 
+                showlegend=False, 
+                height=260,
+                margin=dict(l=10, r=10, t=40, b=10)
+            )
             st.plotly_chart(fig_mr, use_container_width=True)
 
+    # 3. MR Zero Doses Chart
+    with col_summary3:
         if mr_zero_cols:
             mr_zero_totals = []
             for col in mr_zero_cols:
                 val = pd.to_numeric(mr_df[col], errors='coerce').sum()
-                mr_zero_totals.append({"Age Group": col, "Total Administered": int(val)})
+                mr_zero_totals.append({"Age": col.replace("MR Zero ", "").replace(" Total", ""), "Total": int(val)})
 
             chart_data_mr_zero = pd.DataFrame(mr_zero_totals)
 
             fig_mr_zero = px.bar(
                 chart_data_mr_zero,
-                x="Age Group",
-                y="Total Administered",
-                color="Age Group",
-                text="Total Administered",
-                title="MR Zero Doses Administered by Age Group",
+                x="Age",
+                y="Total",
+                color="Age",
+                text="Total",
+                title="<b>MR Zero Doses</b>",
                 color_discrete_sequence=px.colors.qualitative.Safe
             )
-            fig_mr_zero.update_layout(xaxis_title="", yaxis_title="Total Administered", showlegend=False)
+            fig_mr_zero.update_traces(textposition='auto')
+            fig_mr_zero.update_layout(
+                xaxis_title="", 
+                yaxis_title="Doses", 
+                showlegend=False, 
+                height=260,
+                margin=dict(l=10, r=10, t=40, b=10)
+            )
             st.plotly_chart(fig_mr_zero, use_container_width=True)
 
     st.divider()
 
-    # --- SECTION 2: BARANGAY BREAKDOWN CHARTS (PIE CHARTS) ---
+    # --- SECTION 3: ACCOMPLISHMENT PERCENTAGE VS TARGET (GAUGE CHARTS) ---
+    st.header("Target Population vs Accomplishment Gauges")
+
+    if not filtered_target_df.empty:
+        def safe_get_target_col(df, pos_idx, preferred_name_keyword):
+            if len(df.columns) > pos_idx:
+                return df.columns[pos_idx]
+            matched = [c for c in df.columns if preferred_name_keyword.lower() in c.lower()]
+            return matched[0] if matched else None
+
+        col_t_6_59 = safe_get_target_col(filtered_target_df, 5, "6 - 59 months Total")
+        col_t_6_12 = safe_get_target_col(filtered_target_df, 8, "6 - 12 months Total")
+        col_t_13_23 = safe_get_target_col(filtered_target_df, 11, "13 - 23 months Total")
+        col_t_24_59 = safe_get_target_col(filtered_target_df, 14, "24 - 59 months Total")
+
+        t_val_6_12 = pd.to_numeric(filtered_target_df[col_t_6_12], errors='coerce').sum() if col_t_6_12 else 0
+        t_val_13_23 = pd.to_numeric(filtered_target_df[col_t_13_23], errors='coerce').sum() if col_t_13_23 else 0
+        t_val_24_59 = pd.to_numeric(filtered_target_df[col_t_24_59], errors='coerce').sum() if col_t_24_59 else 0
+        t_val_6_59 = pd.to_numeric(filtered_target_df[col_t_6_59], errors='coerce').sum() if col_t_6_59 else 0
+
+        cols_acc_6_12 = [c for c in dose_cols if any(kw in c for kw in ["6-12", "6 - 12", "6-11", "6 - 11"])]
+        cols_acc_13_23 = [c for c in dose_cols if any(kw in c for kw in ["13-23", "13 - 23", "12-23"])]
+        cols_acc_24_59 = [c for c in dose_cols if any(kw in c for kw in ["24-59", "24 - 59"])]
+
+        acc_val_6_12 = filtered_df[cols_acc_6_12].apply(pd.to_numeric, errors='coerce').sum().sum() if cols_acc_6_12 else 0
+        acc_val_13_23 = filtered_df[cols_acc_13_23].apply(pd.to_numeric, errors='coerce').sum().sum() if cols_acc_13_23 else 0
+        acc_val_24_59 = filtered_df[cols_acc_24_59].apply(pd.to_numeric, errors='coerce').sum().sum() if cols_acc_24_59 else 0
+        acc_val_6_59 = acc_val_6_12 + acc_val_13_23 + acc_val_24_59
+
+        target_summary_data = [
+            {"Title": "6 - 12 mos Total [Col I]", "Target": int(t_val_6_12), "Accomplishment": int(acc_val_6_12)},
+            {"Title": "13 - 23 mos Total [Col L]", "Target": int(t_val_13_23), "Accomplishment": int(acc_val_13_23)},
+            {"Title": "24 - 59 mos Total [Col O]", "Target": int(t_val_24_59), "Accomplishment": int(acc_val_24_59)},
+            {"Title": "6 - 59 mos Total [Col F]", "Target": int(t_val_6_59), "Accomplishment": int(acc_val_6_59)},
+        ]
+
+        def create_gauge_chart(title, accomplishment, target):
+            pct = round((accomplishment / target * 100), 1) if target > 0 else 0
+            max_axis_val = max(target, accomplishment) * 1.15 if target > 0 else 100
+
+            fig = go.Figure(go.Indicator(
+                mode="gauge+number+delta",
+                value=accomplishment,
+                number={'valueformat': ',d'},
+                domain={'x': [0.05, 0.95], 'y': [0.05, 0.70]},
+                title={
+                    'text': f"<b>{title}</b><br><span style='font-size:0.85em;color:#475569'>{pct}% of Target ({target:,})</span>", 
+                    'font': {'size': 14},
+                    'align': 'center'
+                },
+                delta={
+                    'reference': target, 
+                    'relative': False, 
+                    'valueformat': ',d', 
+                    'increasing': {'color': "#16a34a"}
+                },
+                gauge={
+                    'axis': {
+                        'range': [0, max_axis_val], 
+                        'tickwidth': 1, 
+                        'tickcolor': "#334155",
+                        'tickformat': ',d'
+                    },
+                    'bar': {'color': "#0284c7"},
+                    'bgcolor': "white",
+                    'borderwidth': 1.5,
+                    'bordercolor': "#cbd5e1",
+                    'steps': [
+                        {'range': [0, target * 0.5], 'color': '#fee2e2'},
+                        {'range': [target * 0.5, target * 0.9], 'color': '#fef3c7'},
+                        {'range': [target * 0.9, target], 'color': '#dcfce7'},
+                        {'range': [target, max_axis_val], 'color': '#bbf7d0'}
+                    ],
+                    'threshold': {
+                        'line': {'color': "#dc2626", 'width': 4},
+                        'thickness': 0.8,
+                        'value': target
+                    }
+                }
+            ))
+
+            fig.update_layout(
+                height=320,
+                margin=dict(l=35, r=35, t=60, b=40)
+            )
+            return fig
+
+        g_col1, g_col2 = st.columns(2, gap="large")
+        
+        with g_col1:
+            st.plotly_chart(
+                create_gauge_chart(target_summary_data[0]["Title"], target_summary_data[0]["Accomplishment"], target_summary_data[0]["Target"]), 
+                use_container_width=True
+            )
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.plotly_chart(
+                create_gauge_chart(target_summary_data[2]["Title"], target_summary_data[2]["Accomplishment"], target_summary_data[2]["Target"]), 
+                use_container_width=True
+            )
+
+        with g_col2:
+            st.plotly_chart(
+                create_gauge_chart(target_summary_data[1]["Title"], target_summary_data[1]["Accomplishment"], target_summary_data[1]["Target"]), 
+                use_container_width=True
+            )
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.plotly_chart(
+                create_gauge_chart(target_summary_data[3]["Title"], target_summary_data[3]["Accomplishment"], target_summary_data[3]["Target"]), 
+                use_container_width=True
+            )
+
+    else:
+        st.info("The 'Target' worksheet could not be loaded or contains no rows. Ensure the Google Sheet tab is named 'Target' and is shared publicly.")
+
+    st.divider()
+
+    # --- SECTION 4: BARANGAY BREAKDOWN CHARTS (PIE CHARTS) ---
     st.header("Accomplishment by Barangay")
     b_left_col, b_right_col = st.columns(2)
 
@@ -321,188 +513,6 @@ if not df_raw.empty:
                 )
                 fig_pie_mr_zero.update_traces(textposition='inside', textinfo='percent+label')
                 st.plotly_chart(fig_pie_mr_zero, use_container_width=True)
-
-    st.divider()
-
-    # --- SECTION 3: ACCOMPLISHMENT PERCENTAGE VS TARGET (GAUGE CHARTS) ---
-    st.header("Target Population vs Accomplishment Gauges")
-
-    if not filtered_target_df.empty:
-        # Helper to get target column safely by position or keyword
-        def safe_get_target_col(df, pos_idx, preferred_name_keyword):
-            if len(df.columns) > pos_idx:
-                return df.columns[pos_idx]
-            matched = [c for c in df.columns if preferred_name_keyword.lower() in c.lower()]
-            return matched[0] if matched else None
-
-        # Columns F (idx 5), I (idx 8), L (idx 11), O (idx 14) from "Target" sheet
-        col_t_6_59 = safe_get_target_col(filtered_target_df, 5, "6 - 59 months Total")
-        col_t_6_12 = safe_get_target_col(filtered_target_df, 8, "6 - 12 months Total")
-        col_t_13_23 = safe_get_target_col(filtered_target_df, 11, "13 - 23 months Total")
-        col_t_24_59 = safe_get_target_col(filtered_target_df, 14, "24 - 59 months Total")
-
-        # Sum targets from filtered "Target" sheet
-        t_val_6_12 = pd.to_numeric(filtered_target_df[col_t_6_12], errors='coerce').sum() if col_t_6_12 else 0
-        t_val_13_23 = pd.to_numeric(filtered_target_df[col_t_13_23], errors='coerce').sum() if col_t_13_23 else 0
-        t_val_24_59 = pd.to_numeric(filtered_target_df[col_t_24_59], errors='coerce').sum() if col_t_24_59 else 0
-        t_val_6_59 = pd.to_numeric(filtered_target_df[col_t_6_59], errors='coerce').sum() if col_t_6_59 else 0
-
-        # Calculate actual accomplishments from main sheet
-        cols_acc_6_12 = [c for c in dose_cols if any(kw in c for kw in ["6-12", "6 - 12", "6-11", "6 - 11"])]
-        cols_acc_13_23 = [c for c in dose_cols if any(kw in c for kw in ["13-23", "13 - 23", "12-23"])]
-        cols_acc_24_59 = [c for c in dose_cols if any(kw in c for kw in ["24-59", "24 - 59"])]
-
-        acc_val_6_12 = filtered_df[cols_acc_6_12].apply(pd.to_numeric, errors='coerce').sum().sum() if cols_acc_6_12 else 0
-        acc_val_13_23 = filtered_df[cols_acc_13_23].apply(pd.to_numeric, errors='coerce').sum().sum() if cols_acc_13_23 else 0
-        acc_val_24_59 = filtered_df[cols_acc_24_59].apply(pd.to_numeric, errors='coerce').sum().sum() if cols_acc_24_59 else 0
-        acc_val_6_59 = acc_val_6_12 + acc_val_13_23 + acc_val_24_59
-
-        target_summary_data = [
-            {"Title": "6 - 12 mos Total [Col I]", "Target": int(t_val_6_12), "Accomplishment": int(acc_val_6_12)},
-            {"Title": "13 - 23 mos Total [Col L]", "Target": int(t_val_13_23), "Accomplishment": int(acc_val_13_23)},
-            {"Title": "24 - 59 mos Total [Col O]", "Target": int(t_val_24_59), "Accomplishment": int(acc_val_24_59)},
-            {"Title": "6 - 59 mos Total [Col F]", "Target": int(t_val_6_59), "Accomplishment": int(acc_val_6_59)},
-        ]
-
-        # Function to generate individual gauge chart with custom thresholds and target line
-# Function to generate individual gauge chart with full, unabbreviated numbers
-        def create_gauge_chart(title, accomplishment, target):
-            pct = round((accomplishment / target * 100), 1) if target > 0 else 0
-            max_axis_val = max(target, accomplishment) * 1.15 if target > 0 else 100
-
-            fig = go.Figure(go.Indicator(
-                mode="gauge+number+delta",
-                value=accomplishment,
-                number={'valueformat': ',d'},  # Display full integer with commas (e.g., 12,345)
-                domain={'x': [0.05, 0.95], 'y': [0.05, 0.70]},
-                title={
-                    'text': f"<b>{title}</b><br><span style='font-size:0.85em;color:#475569'>{pct}% of Target ({target:,})</span>", 
-                    'font': {'size': 14},
-                    'align': 'center'
-                },
-                delta={
-                    'reference': target, 
-                    'relative': False, 
-                    'valueformat': ',d',  # Display full target difference with commas
-                    'increasing': {'color': "#16a34a"}
-                },
-                gauge={
-                    'axis': {
-                        'range': [0, max_axis_val], 
-                        'tickwidth': 1, 
-                        'tickcolor': "#334155",
-                        'tickformat': ',d' # Prevent tick labels from using 'k' notation
-                    },
-                    'bar': {'color': "#0284c7"},
-                    'bgcolor': "white",
-                    'borderwidth': 1.5,
-                    'bordercolor': "#cbd5e1",
-                    'steps': [
-                        {'range': [0, target * 0.5], 'color': '#fee2e2'},         # 0% - 50%: Red tint
-                        {'range': [target * 0.5, target * 0.9], 'color': '#fef3c7'}, # 50% - 90%: Yellow tint
-                        {'range': [target * 0.9, target], 'color': '#dcfce7'},      # 90% - 100%: Light green tint
-                        {'range': [target, max_axis_val], 'color': '#bbf7d0'}       # 100%+: Deep green tint
-                    ],
-                    'threshold': {
-                        'line': {'color': "#dc2626", 'width': 4},
-                        'thickness': 0.8,
-                        'value': target
-                    }
-                }
-            ))
-
-            fig.update_layout(
-                height=320,
-                margin=dict(l=35, r=35, t=60, b=40)
-            )
-            return fig
-
-				
-        # Render 2x2 Grid with explicit column gaps
-        g_col1, g_col2 = st.columns(2, gap="large")
-        
-        with g_col1:
-            st.plotly_chart(
-                create_gauge_chart(target_summary_data[0]["Title"], target_summary_data[0]["Accomplishment"], target_summary_data[0]["Target"]), 
-                use_container_width=True
-            )
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.plotly_chart(
-                create_gauge_chart(target_summary_data[2]["Title"], target_summary_data[2]["Accomplishment"], target_summary_data[2]["Target"]), 
-                use_container_width=True
-            )
-
-        with g_col2:
-            st.plotly_chart(
-                create_gauge_chart(target_summary_data[1]["Title"], target_summary_data[1]["Accomplishment"], target_summary_data[1]["Target"]), 
-                use_container_width=True
-            )
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.plotly_chart(
-                create_gauge_chart(target_summary_data[3]["Title"], target_summary_data[3]["Accomplishment"], target_summary_data[3]["Target"]), 
-                use_container_width=True
-            )
-
-    else:
-        st.info("The 'Target' worksheet could not be loaded or contains no rows. Ensure the Google Sheet tab is named 'Target' and is shared publicly.")
-
-    st.divider()
-
-    # --- SECTION 4: DAILY RESPONSE TRENDS (LINE CHART) ---
-    st.header("Daily Response Trends")
-
-    daily_vit_a = pd.DataFrame()
-    if vit_a_target_cols and not vit_a_df.empty:
-        vit_a_df_clean = vit_a_df.dropna(subset=[col_date]).copy()
-        vit_a_df_clean['Daily_Vit_A_Total'] = vit_a_df_clean[vit_a_target_cols].apply(
-            pd.to_numeric, errors='coerce'
-        ).sum(axis=1)
-        daily_vit_a = vit_a_df_clean.groupby(vit_a_df_clean[col_date].dt.date)['Daily_Vit_A_Total'].sum().reset_index()
-
-    daily_mr = pd.DataFrame()
-    if all_mr_cols and not mr_df.empty:
-        mr_df_clean = mr_df.dropna(subset=[col_date]).copy()
-        mr_df_clean['Daily_MR_Total'] = mr_df_clean[all_mr_cols].apply(
-            pd.to_numeric, errors='coerce'
-        ).sum(axis=1)
-        daily_mr = mr_df_clean.groupby(mr_df_clean[col_date].dt.date)['Daily_MR_Total'].sum().reset_index()
-
-    if not daily_vit_a.empty or not daily_mr.empty:
-        daily_trend_df = pd.merge(daily_vit_a, daily_mr, on=col_date, how='outer').fillna(0)
-        daily_trend_df = daily_trend_df.sort_values(by=col_date)
-
-        daily_melted = daily_trend_df.melt(
-            id_vars=[col_date],
-            value_vars=['Daily_Vit_A_Total', 'Daily_MR_Total'],
-            var_name='Response Type',
-            value_name='Total Administered'
-        )
-
-        daily_melted['Response Type'] = daily_melted['Response Type'].map({
-            'Daily_Vit_A_Total': 'Vitamin A Response',
-            'Daily_MR_Total': 'Measles-Rubella (MR) Response'
-        })
-
-        fig_line = px.line(
-            daily_melted,
-            x=col_date,
-            y='Total Administered',
-            color='Response Type',
-            markers=True,
-            title='Daily Total Response Over Time',
-            color_discrete_map={
-                'Vitamin A Response': '#2ca02c',
-                'Measles-Rubella (MR) Response': '#1f77b4'
-            }
-        )
-        fig_line.update_layout(
-            xaxis_title="Date",
-            yaxis_title="Total Administered",
-            hovermode="x unified"
-        )
-        st.plotly_chart(fig_line, use_container_width=True)
-    else:
-        st.info("No daily date data available to render line chart trends.")
 
 else:
     st.warning("Unable to fetch data. Please check the spreadsheet URL or permissions.")
