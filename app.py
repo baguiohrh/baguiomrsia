@@ -53,9 +53,7 @@ def load_target_data():
 @st.cache_data(ttl=600)
 def load_data_as_of():
     try:
-        # Load the dataAsOf sheet
         df_as_of = pd.read_csv(DATA_AS_OF_URL, header=None)
-        # Extract Cell A2 (Row index 1, Col index 0) and Cell B2 (Row index 1, Col index 1)
         extract_date = str(df_as_of.iloc[1, 0]).strip() if len(df_as_of) > 1 and len(df_as_of.columns) > 0 else ""
         extract_time = str(df_as_of.iloc[1, 1]).strip() if len(df_as_of) > 1 and len(df_as_of.columns) > 1 else ""
         return extract_date, extract_time
@@ -356,20 +354,31 @@ if not df_raw.empty:
 
     if not filtered_target_df.empty:
         def safe_get_target_col(df, pos_idx, preferred_name_keyword):
-            if len(df.columns) > pos_idx:
+            if len(df.columns) > pos_idx and preferred_name_keyword.lower() in df.columns[pos_idx].lower():
                 return df.columns[pos_idx]
             matched = [c for c in df.columns if preferred_name_keyword.lower() in c.lower()]
             return matched[0] if matched else None
 
-        col_t_6_59 = safe_get_target_col(filtered_target_df, 5, "6 - 59 months Total")
-        col_t_6_12 = safe_get_target_col(filtered_target_df, 8, "6 - 12 months Total")
-        col_t_13_23 = safe_get_target_col(filtered_target_df, 11, "13 - 23 months Total")
-        col_t_24_59 = safe_get_target_col(filtered_target_df, 14, "24 - 59 months Total")
+        col_t_6_59 = safe_get_target_col(filtered_target_df, 5, "6 - 59")
+        col_t_6_12 = safe_get_target_col(filtered_target_df, 8, "6 - 12")
+        col_t_13_23 = safe_get_target_col(filtered_target_df, 11, "13 - 23")
+        col_t_24_59 = safe_get_target_col(filtered_target_df, 14, "24 - 59")
 
         t_val_6_12 = pd.to_numeric(filtered_target_df[col_t_6_12], errors='coerce').sum() if col_t_6_12 else 0
         t_val_13_23 = pd.to_numeric(filtered_target_df[col_t_13_23], errors='coerce').sum() if col_t_13_23 else 0
-        t_val_24_59 = pd.to_numeric(filtered_target_df[col_t_24_59], errors='coerce').sum() if col_t_24_59 else 0
-        t_val_6_59 = pd.to_numeric(filtered_target_df[col_t_6_59], errors='coerce').sum() if col_t_6_59 else 0
+        
+        # Target totals override logic
+        if len(filtered_target_df) == len(df_target_raw):
+            t_val_24_59 = 16910
+            t_val_6_59 = 25335
+        else:
+            raw_t_24_59 = pd.to_numeric(df_target_raw[col_t_24_59], errors='coerce').sum() if col_t_24_59 else 1
+            filter_t_24_59 = pd.to_numeric(filtered_target_df[col_t_24_59], errors='coerce').sum() if col_t_24_59 else 0
+            t_val_24_59 = int(round((filter_t_24_59 / raw_t_24_59) * 16910)) if raw_t_24_59 > 0 else 16910
+
+            raw_t_6_59 = pd.to_numeric(df_target_raw[col_t_6_59], errors='coerce').sum() if col_t_6_59 else 1
+            filter_t_6_59 = pd.to_numeric(filtered_target_df[col_t_6_59], errors='coerce').sum() if col_t_6_59 else 0
+            t_val_6_59 = int(round((filter_t_6_59 / raw_t_6_59) * 25335)) if raw_t_6_59 > 0 else 25335
 
         cols_acc_6_12 = [c for c in dose_cols if any(kw in c for kw in ["6-12", "6 - 12", "6-11", "6 - 11"])]
         cols_acc_13_23 = [c for c in dose_cols if any(kw in c for kw in ["13-23", "13 - 23", "12-23"])]
@@ -380,25 +389,18 @@ if not df_raw.empty:
         acc_val_24_59 = filtered_df[cols_acc_24_59].apply(pd.to_numeric, errors='coerce').sum().sum() if cols_acc_24_59 else 0
         acc_val_6_59 = acc_val_6_12 + acc_val_13_23 + acc_val_24_59
 
-        target_summary_data = [
-            {"Title": "6 - 12 mos Total [Col I]", "Target": int(t_val_6_12), "Accomplishment": int(acc_val_6_12)},
-            {"Title": "13 - 23 mos Total [Col L]", "Target": int(t_val_13_23), "Accomplishment": int(acc_val_13_23)},
-            {"Title": "24 - 59 mos Total [Col O]", "Target": int(t_val_24_59), "Accomplishment": int(acc_val_24_59)},
-            {"Title": "6 - 59 mos Total [Col F]", "Target": int(t_val_6_59), "Accomplishment": int(acc_val_6_59)},
-        ]
-
-        def create_gauge_chart(title, accomplishment, target):
+        def create_gauge_chart(title, accomplishment, target, height=300, font_size=14, is_large=False):
             pct = round((accomplishment / target * 100), 1) if target > 0 else 0
             max_axis_val = max(target, accomplishment) * 1.15 if target > 0 else 100
 
             fig = go.Figure(go.Indicator(
                 mode="gauge+number+delta",
                 value=accomplishment,
-                number={'valueformat': ',d'},
+                number={'valueformat': ',d', 'font': {'size': 36 if is_large else 28}},
                 domain={'x': [0.05, 0.95], 'y': [0.05, 0.70]},
                 title={
-                    'text': f"<b>{title}</b><br><span style='font-size:0.85em;color:#475569'>{pct}% of Target ({target:,})</span>", 
-                    'font': {'size': 14},
+                    'text': f"<b>{title}</b><br><span style='font-size:{0.95 if is_large else 0.85}em;color:#475569'>{pct}% of Target ({target:,})</span>", 
+                    'font': {'size': font_size},
                     'align': 'center'
                 },
                 delta={
@@ -433,34 +435,45 @@ if not df_raw.empty:
             ))
 
             fig.update_layout(
-                height=320,
-                margin=dict(l=35, r=35, t=60, b=40)
+                height=height,
+                margin=dict(l=25, r=25, t=50 if not is_large else 60, b=30)
             )
             return fig
 
-        g_col1, g_col2 = st.columns(2, gap="large")
-        
-        with g_col1:
+        # Row 1: Age Brackets (6-12 mos, 13-23 mos, 24-59 mos side-by-side)
+        g_row1_col1, g_row1_col2, g_row1_col3 = st.columns(3)
+
+        with g_row1_col1:
             st.plotly_chart(
-                create_gauge_chart(target_summary_data[0]["Title"], target_summary_data[0]["Accomplishment"], target_summary_data[0]["Target"]), 
-                use_container_width=True
-            )
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.plotly_chart(
-                create_gauge_chart(target_summary_data[2]["Title"], target_summary_data[2]["Accomplishment"], target_summary_data[2]["Target"]), 
+                create_gauge_chart("6 - 12 mos Total [Col I]", acc_val_6_12, int(t_val_6_12)), 
                 use_container_width=True
             )
 
-        with g_col2:
+        with g_row1_col2:
             st.plotly_chart(
-                create_gauge_chart(target_summary_data[1]["Title"], target_summary_data[1]["Accomplishment"], target_summary_data[1]["Target"]), 
+                create_gauge_chart("13 - 23 mos Total [Col L]", acc_val_13_23, int(t_val_13_23)), 
                 use_container_width=True
             )
-            st.markdown("<br>", unsafe_allow_html=True)
+
+        with g_row1_col3:
             st.plotly_chart(
-                create_gauge_chart(target_summary_data[3]["Title"], target_summary_data[3]["Accomplishment"], target_summary_data[3]["Target"]), 
+                create_gauge_chart("24 - 59 mos Total [Col O]", acc_val_24_59, int(t_val_24_59)), 
                 use_container_width=True
             )
+
+        # Row 2: Larger overall summary chart (6-59 mos)
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.plotly_chart(
+            create_gauge_chart(
+                "Overall Target: 6 - 59 mos Total [Col F]", 
+                acc_val_6_59, 
+                int(t_val_6_59), 
+                height=420, 
+                font_size=18, 
+                is_large=True
+            ), 
+            use_container_width=True
+        )
 
     else:
         st.info("The 'Target' worksheet could not be loaded or contains no rows. Ensure the Google Sheet tab is named 'Target' and is shared publicly.")
@@ -545,8 +558,6 @@ if not df_raw.empty:
     # --- SECTION 5: DEFERRAL AND REFUSAL ANALYSIS ---
     st.header("Deferral and Refusal Analysis")
 
-    # Column U (Index 20) -> Total Deferrals
-    # Column V (Index 21) -> Total Refusals
     col_deferrals = df_raw.columns[20] if len(df_raw.columns) > 20 else None
     col_refusals = df_raw.columns[21] if len(df_raw.columns) > 21 else None
 
@@ -581,7 +592,6 @@ if not df_raw.empty:
     st.subheader("Reason Breakdown Tables")
     tbl_col1, tbl_col2 = st.columns(2)
 
-    # Deferral Reasons: Column AB (27) to Column AO (40)
     with tbl_col1:
         st.markdown("#### Deferral Reasons")
         def_reason_cols = df_raw.columns[27:41].tolist() if len(df_raw.columns) >= 41 else []
@@ -598,7 +608,6 @@ if not df_raw.empty:
         else:
             st.info("No Deferral Reason columns found (Columns AB:AO).")
 
-    # Refusal Reasons: Column AP (41) to Column AX (49)
     with tbl_col2:
         st.markdown("#### Refusal Reasons")
         ref_reason_cols = df_raw.columns[41:50].tolist() if len(df_raw.columns) >= 50 else []
