@@ -67,6 +67,11 @@ def load_data_as_of():
         except Exception:
             return "", ""
 
+# --- HELPER FUNCTION FOR CSV CONVERSION ---
+@st.cache_data
+def convert_df_to_csv(df):
+    return df.to_csv(index=False).encode('utf-8')
+
 df_raw = load_data()
 df_target_raw = load_target_data()
 as_of_date, as_of_time = load_data_as_of()
@@ -85,16 +90,32 @@ if not df_raw.empty:
     col_date = df_raw.columns[8]      # Column I (Vaccination Date)
     col_response = df_raw.columns[9]  # Column J (Response Type)
 
-    # Specific Columns for DHC Summary
+    # Specific Columns for MR (Columns K, L, M)
     col_mr_6_12 = df_raw.columns[10]   # Column K (MR 6-12 mos Total)
     col_mr_13_23 = df_raw.columns[11]  # Column L (MR 13-23 mos Total)
     col_mr_24_59 = df_raw.columns[12]  # Column M (MR 24-59 mos Total)
 
+    # Specific Columns for Vit A (Columns Q, R)
     col_vit_6_11 = df_raw.columns[16]   # Column Q (Vit A 6-11 mos Total)
     col_vit_12_59 = df_raw.columns[17]  # Column R (Vit A 12-59 mos Total)
 
     # List of dose metrics columns (Column K onwards)
     dose_cols = df_raw.columns[10:].tolist()
+
+    # --- SIDEBAR QUICK NAVIGATION LINKS ---
+    st.sidebar.header("🧭 Quick Navigation")
+    st.sidebar.markdown("""
+    - 📊 [Accomplishment Summary](#accomplishment-summary)
+    - 📈 [Daily Response Trends](#daily-response-trends)
+    - 🔢 [Overall Metric Summary](#overall-metric-summary)
+    - 🎯 [Target Population vs Gauges](#target-population-vs-accomplishment-gauges)
+    - 🏥 [DHC Accomplishment Data Summary](#dhc-accomplishment-data-summary)
+    - 🗺️ [Barangay Table Heatmap](#barangay-accomplishment-table-heatmap)
+    - 🥧 [Share by Barangay](#accomplishment-share-by-barangay)
+    - ⚠️ [Deferral & Refusal Analysis](#deferral-and-refusal-analysis)
+    """)
+
+    st.sidebar.markdown("---")
 
     # --- SIDEBAR FILTERS ---
     st.sidebar.header("Filter Options")
@@ -103,8 +124,13 @@ if not df_raw.empty:
     bakuna_centers = sorted(df_raw[col_bakuna].dropna().astype(str).unique().tolist())
     selected_bakuna = st.sidebar.multiselect("Bakuna Center Name", bakuna_centers)
 
-    # Filter 2: Barangay Name [Column H]
-    barangays = sorted(df_raw[col_barangay].dropna().astype(str).unique().tolist())
+    # Filter 2: Barangay Name [Column H] (DEPENDENT ON BAKUNA CENTER SELECTION)
+    if selected_bakuna:
+        available_barangays_df = df_raw[df_raw[col_bakuna].astype(str).isin(selected_bakuna)]
+        barangays = sorted(available_barangays_df[col_barangay].dropna().astype(str).unique().tolist())
+    else:
+        barangays = sorted(df_raw[col_barangay].dropna().astype(str).unique().tolist())
+
     selected_barangay = st.sidebar.multiselect("Barangay Name", barangays)
 
     # Filter 3: Vaccination Date Range [Column I]
@@ -136,6 +162,18 @@ if not df_raw.empty:
             (filtered_df[col_date].dt.date >= start_date) & 
             (filtered_df[col_date].dt.date <= end_date)
         ]
+
+    # --- SIDEBAR RAW DATA DOWNLOAD BUTTON ---
+    st.sidebar.markdown("---")
+    st.sidebar.header("Data Export")
+    raw_csv_data = convert_df_to_csv(filtered_df)
+    st.sidebar.download_button(
+        label="📥 Download Filtered Raw Data",
+        data=raw_csv_data,
+        file_name="filtered_raw_accomplishment_data.csv",
+        mime="text/csv",
+        key="download_filtered_raw"
+    )
 
     # --- APPLY FILTERS TO TARGET DATA ---
     filtered_target_df = df_target_raw.copy()
@@ -484,31 +522,28 @@ if not df_raw.empty:
         )
 
     else:
-        st.info("The 'Target' worksheet could not be loaded or contains no rows. Ensure the Google Sheet tab is named 'Target' and is shared publicly.")
+        st.info("The 'Target' worksheet could not be loaded or contains no rows.")
 
     st.divider()
 
-# --- SECTION: DHC ACCOMPLISHMENT DATA SUMMARY ---
+    # --- SECTION 4: DHC ACCOMPLISHMENT DATA SUMMARY ---
     st.header("DHC Accomplishment Data Summary")
     
     dhc_col1, dhc_col2 = st.columns(2)
 
-    # 1. Measles-Rubella Table & Chart (Filtered Response Type = "Measles" or "MR")
+    # 1. Measles-Rubella Table & Chart
     with dhc_col1:
         st.subheader("Measles-Rubella (MR) by Bakuna Center")
         if not mr_df.empty:
             dhc_mr_df = mr_df.copy()
             
-            # Numeric conversion for col K, L, M
             dhc_mr_df['MR_6_12'] = pd.to_numeric(dhc_mr_df[col_mr_6_12], errors='coerce').fillna(0)
             dhc_mr_df['MR_13_23'] = pd.to_numeric(dhc_mr_df[col_mr_13_23], errors='coerce').fillna(0)
             dhc_mr_df['MR_24_59'] = pd.to_numeric(dhc_mr_df[col_mr_24_59], errors='coerce').fillna(0)
 
-            # Grouping by Bakuna Center & calculating total
             mr_summary = dhc_mr_df.groupby(col_bakuna)[['MR_6_12', 'MR_13_23', 'MR_24_59']].sum().reset_index()
             mr_summary['Total MR'] = mr_summary['MR_6_12'] + mr_summary['MR_13_23'] + mr_summary['MR_24_59']
 
-            # Column renaming for clear presentation
             mr_summary.columns = [
                 'Bakuna Center Name', 
                 'MR 6-12mos [col K]', 
@@ -517,10 +552,8 @@ if not df_raw.empty:
                 'Total MR'
             ]
 
-            # SORT BY TOTAL DESCENDING
             mr_summary = mr_summary.sort_values(by='Total MR', ascending=False)
 
-            # Calculate and append Total row for Table
             total_row = pd.DataFrame([{
                 'Bakuna Center Name': 'TOTAL',
                 'MR 6-12mos [col K]': mr_summary['MR 6-12mos [col K]'].sum(),
@@ -532,9 +565,17 @@ if not df_raw.empty:
             mr_summary_final = pd.concat([mr_summary, total_row], ignore_index=True)
             st.dataframe(mr_summary_final, use_container_width=True, hide_index=True)
 
-            # Horizontal Bar Chart for MR
+            # Export Button for MR Summary
+            st.download_button(
+                label="📥 Export MR Table (CSV)",
+                data=convert_df_to_csv(mr_summary_final),
+                file_name="mr_summary_by_bakuna_center.csv",
+                mime="text/csv",
+                key="download_mr_summary"
+            )
+
             fig_mr_bar = px.bar(
-                mr_summary.sort_values(by='Total MR', ascending=True), # ascending for chart so highest is on top
+                mr_summary.sort_values(by='Total MR', ascending=True),
                 y='Bakuna Center Name',
                 x='Total MR',
                 orientation='h',
@@ -554,21 +595,18 @@ if not df_raw.empty:
         else:
             st.info("No Measles-Rubella data available for table aggregation.")
 
-    # 2. Vitamin A Table & Chart (Filtered Response Type = "Vitamin A")
+    # 2. Vitamin A Table & Chart
     with dhc_col2:
         st.subheader("Vitamin A by Bakuna Center")
         if not vit_a_df.empty:
             dhc_vit_df = vit_a_df.copy()
 
-            # Numeric conversion for col Q, R
             dhc_vit_df['Vit_6_11'] = pd.to_numeric(dhc_vit_df[col_vit_6_11], errors='coerce').fillna(0)
             dhc_vit_df['Vit_12_59'] = pd.to_numeric(dhc_vit_df[col_vit_12_59], errors='coerce').fillna(0)
 
-            # Grouping by Bakuna Center & calculating total
             vit_summary = dhc_vit_df.groupby(col_bakuna)[['Vit_6_11', 'Vit_12_59']].sum().reset_index()
             vit_summary['Total Vit A'] = vit_summary['Vit_6_11'] + vit_summary['Vit_12_59']
 
-            # Column renaming for clear presentation
             vit_summary.columns = [
                 'Bakuna Center Name', 
                 'Vit A 6-11mos [col Q]', 
@@ -576,10 +614,8 @@ if not df_raw.empty:
                 'Total Vit A'
             ]
 
-            # SORT BY TOTAL DESCENDING
             vit_summary = vit_summary.sort_values(by='Total Vit A', ascending=False)
 
-            # Calculate and append Total row for Table
             total_vit_row = pd.DataFrame([{
                 'Bakuna Center Name': 'TOTAL',
                 'Vit A 6-11mos [col Q]': vit_summary['Vit A 6-11mos [col Q]'].sum(),
@@ -590,9 +626,17 @@ if not df_raw.empty:
             vit_summary_final = pd.concat([vit_summary, total_vit_row], ignore_index=True)
             st.dataframe(vit_summary_final, use_container_width=True, hide_index=True)
 
-            # Horizontal Bar Chart for Vitamin A
+            # Export Button for Vitamin A Summary
+            st.download_button(
+                label="📥 Export Vitamin A Table (CSV)",
+                data=convert_df_to_csv(vit_summary_final),
+                file_name="vit_a_summary_by_bakuna_center.csv",
+                mime="text/csv",
+                key="download_vit_a_summary"
+            )
+
             fig_vit_bar = px.bar(
-                vit_summary.sort_values(by='Total Vit A', ascending=True), # ascending for chart so highest is on top
+                vit_summary.sort_values(by='Total Vit A', ascending=True),
                 y='Bakuna Center Name',
                 x='Total Vit A',
                 orientation='h',
@@ -611,11 +655,81 @@ if not df_raw.empty:
 
         else:
             st.info("No Vitamin A data available for table aggregation.")
-            
+
     st.divider()
 
-    # --- SECTION 4: BARANGAY BREAKDOWN CHARTS (PIE CHARTS) ---
-    st.header("Accomplishment by Barangay")
+    # --- SECTION 5: BARANGAY ACCOMPLISHMENT TABLE HEATMAP ---
+    st.header("Barangay Accomplishment Table Heatmap")
+
+    # Define exact columns requested:
+    heatmap_mr_cols = [col_mr_6_12, col_mr_13_23, col_mr_24_59]
+    heatmap_vit_cols = [col_vit_6_11, col_vit_12_59]
+
+    bgy_summary_records = []
+    
+    # Use the filtered barangay list so heatmap stays aligned with filters
+    heatmap_barangays = selected_barangay if selected_barangay else barangays
+
+    for bgy in heatmap_barangays:
+        bgy_data = filtered_df[filtered_df[col_barangay].astype(str) == bgy]
+        
+        mr_doses_val = bgy_data[heatmap_mr_cols].apply(pd.to_numeric, errors='coerce').sum().sum()
+        vit_a_val = bgy_data[heatmap_vit_cols].apply(pd.to_numeric, errors='coerce').sum().sum()
+
+        bgy_summary_records.append({
+            "Barangay": bgy,
+            "MR (Cols K-M)": int(mr_doses_val),
+            "Vitamin A (Cols Q-R)": int(vit_a_val),
+            "Total Accomplishment": int(mr_doses_val + vit_a_val)
+        })
+
+    heatmap_df = pd.DataFrame(bgy_summary_records)
+    heatmap_df = heatmap_df.sort_values(by="Total Accomplishment", ascending=False)
+
+    if not heatmap_df.empty:
+        # Export Button for Barangay Accomplishment Heatmap Data
+        st.download_button(
+            label="📥 Export Barangay Accomplishment Data (CSV)",
+            data=convert_df_to_csv(heatmap_df),
+            file_name="barangay_accomplishment_summary.csv",
+            mime="text/csv",
+            key="download_bgy_heatmap_data"
+        )
+
+        # Melt DataFrame for Plotly Heatmap
+        heatmap_melted = heatmap_df.sort_values(by="Total Accomplishment", ascending=True).melt(
+            id_vars=["Barangay"],
+            value_vars=["MR (Cols K-M)", "Vitamin A (Cols Q-R)"],
+            var_name="Category",
+            value_name="Count"
+        )
+
+        fig_table_heatmap = px.density_heatmap(
+            heatmap_melted,
+            x="Category",
+            y="Barangay",
+            z="Count",
+            color_continuous_scale="YlGnBu",
+            text_auto=True,
+            title="<b>Barangay Accomplishment Heatmap (MR: Cols K-M | Vit A: Cols Q-R)</b>"
+        )
+
+        dynamic_height = max(500, len(heatmap_df) * 22)
+        fig_table_heatmap.update_layout(
+            xaxis_title="Vaccination Category",
+            yaxis_title="Barangay Name",
+            height=dynamic_height,
+            coloraxis_colorbar=dict(title="Doses"),
+            margin=dict(l=10, r=10, t=50, b=20)
+        )
+        st.plotly_chart(fig_table_heatmap, use_container_width=True)
+    else:
+        st.info("No barangay accomplishment data available to render table heatmap.")
+
+    st.divider()
+
+    # --- SECTION 6: BARANGAY BREAKDOWN CHARTS (PIE CHARTS) ---
+    st.header("Accomplishment Share by Barangay")
     b_left_col, b_right_col = st.columns(2)
 
     with b_left_col:
@@ -689,7 +803,7 @@ if not df_raw.empty:
 
     st.divider()
 
-    # --- SECTION 5: DEFERRAL AND REFUSAL ANALYSIS ---
+    # --- SECTION 7: DEFERRAL AND REFUSAL ANALYSIS ---
     st.header("Deferral and Refusal Analysis")
 
     col_deferrals = df_raw.columns[20] if len(df_raw.columns) > 20 else None
@@ -739,6 +853,14 @@ if not df_raw.empty:
         if def_reasons_data:
             def_reasons_df = pd.DataFrame(def_reasons_data).sort_values(by="Count", ascending=False)
             st.dataframe(def_reasons_df, use_container_width=True, hide_index=True)
+
+            st.download_button(
+                label="📥 Export Deferral Reasons (CSV)",
+                data=convert_df_to_csv(def_reasons_df),
+                file_name="deferral_reasons_summary.csv",
+                mime="text/csv",
+                key="download_deferral_reasons"
+            )
         else:
             st.info("No Deferral Reason columns found (Columns AB:AO).")
 
@@ -755,6 +877,14 @@ if not df_raw.empty:
         if ref_reasons_data:
             ref_reasons_df = pd.DataFrame(ref_reasons_data).sort_values(by="Count", ascending=False)
             st.dataframe(ref_reasons_df, use_container_width=True, hide_index=True)
+
+            st.download_button(
+                label="📥 Export Refusal Reasons (CSV)",
+                data=convert_df_to_csv(ref_reasons_df),
+                file_name="refusal_reasons_summary.csv",
+                mime="text/csv",
+                key="download_refusal_reasons"
+            )
         else:
             st.info("No Refusal Reason columns found (Columns AP:AX).")
 
