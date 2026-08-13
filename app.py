@@ -85,6 +85,14 @@ if not df_raw.empty:
     col_date = df_raw.columns[8]      # Column I (Vaccination Date)
     col_response = df_raw.columns[9]  # Column J (Response Type)
 
+    # Specific Columns for DHC Summary
+    col_mr_6_12 = df_raw.columns[10]   # Column K (MR 6-12 mos Total)
+    col_mr_13_23 = df_raw.columns[11]  # Column L (MR 13-23 mos Total)
+    col_mr_24_59 = df_raw.columns[12]  # Column M (MR 24-59 mos Total)
+
+    col_vit_6_11 = df_raw.columns[16]   # Column Q (Vit A 6-11 mos Total)
+    col_vit_12_59 = df_raw.columns[17]  # Column R (Vit A 12-59 mos Total)
+
     # List of dose metrics columns (Column K onwards)
     dose_cols = df_raw.columns[10:].tolist()
 
@@ -478,6 +486,132 @@ if not df_raw.empty:
     else:
         st.info("The 'Target' worksheet could not be loaded or contains no rows. Ensure the Google Sheet tab is named 'Target' and is shared publicly.")
 
+    st.divider()
+
+# --- SECTION: DHC ACCOMPLISHMENT DATA SUMMARY ---
+    st.header("DHC Accomplishment Data Summary")
+    
+    dhc_col1, dhc_col2 = st.columns(2)
+
+    # 1. Measles-Rubella Table & Chart (Filtered Response Type = "Measles" or "MR")
+    with dhc_col1:
+        st.subheader("Measles-Rubella (MR) by Bakuna Center")
+        if not mr_df.empty:
+            dhc_mr_df = mr_df.copy()
+            
+            # Numeric conversion for col K, L, M
+            dhc_mr_df['MR_6_12'] = pd.to_numeric(dhc_mr_df[col_mr_6_12], errors='coerce').fillna(0)
+            dhc_mr_df['MR_13_23'] = pd.to_numeric(dhc_mr_df[col_mr_13_23], errors='coerce').fillna(0)
+            dhc_mr_df['MR_24_59'] = pd.to_numeric(dhc_mr_df[col_mr_24_59], errors='coerce').fillna(0)
+
+            # Grouping by Bakuna Center & calculating total
+            mr_summary = dhc_mr_df.groupby(col_bakuna)[['MR_6_12', 'MR_13_23', 'MR_24_59']].sum().reset_index()
+            mr_summary['Total MR'] = mr_summary['MR_6_12'] + mr_summary['MR_13_23'] + mr_summary['MR_24_59']
+
+            # Column renaming for clear presentation
+            mr_summary.columns = [
+                'Bakuna Center Name', 
+                'MR 6-12mos [col K]', 
+                'MR 13-23mos [col L]', 
+                'MR 24-59mos [col M]',
+                'Total MR'
+            ]
+
+            # SORT BY TOTAL DESCENDING
+            mr_summary = mr_summary.sort_values(by='Total MR', ascending=False)
+
+            # Calculate and append Total row for Table
+            total_row = pd.DataFrame([{
+                'Bakuna Center Name': 'TOTAL',
+                'MR 6-12mos [col K]': mr_summary['MR 6-12mos [col K]'].sum(),
+                'MR 13-23mos [col L]': mr_summary['MR 13-23mos [col L]'].sum(),
+                'MR 24-59mos [col M]': mr_summary['MR 24-59mos [col M]'].sum(),
+                'Total MR': mr_summary['Total MR'].sum()
+            }])
+            
+            mr_summary_final = pd.concat([mr_summary, total_row], ignore_index=True)
+            st.dataframe(mr_summary_final, use_container_width=True, hide_index=True)
+
+            # Horizontal Bar Chart for MR
+            fig_mr_bar = px.bar(
+                mr_summary.sort_values(by='Total MR', ascending=True), # ascending for chart so highest is on top
+                y='Bakuna Center Name',
+                x='Total MR',
+                orientation='h',
+                text='Total MR',
+                title='<b>Total MR Doses by Bakuna Center</b>',
+                color_discrete_sequence=['#1f77b4']
+            )
+            fig_mr_bar.update_traces(textposition='outside')
+            fig_mr_bar.update_layout(
+                xaxis_title="Total Doses",
+                yaxis_title="",
+                height=max(350, len(mr_summary) * 30),
+                margin=dict(l=10, r=20, t=40, b=20)
+            )
+            st.plotly_chart(fig_mr_bar, use_container_width=True)
+
+        else:
+            st.info("No Measles-Rubella data available for table aggregation.")
+
+    # 2. Vitamin A Table & Chart (Filtered Response Type = "Vitamin A")
+    with dhc_col2:
+        st.subheader("Vitamin A by Bakuna Center")
+        if not vit_a_df.empty:
+            dhc_vit_df = vit_a_df.copy()
+
+            # Numeric conversion for col Q, R
+            dhc_vit_df['Vit_6_11'] = pd.to_numeric(dhc_vit_df[col_vit_6_11], errors='coerce').fillna(0)
+            dhc_vit_df['Vit_12_59'] = pd.to_numeric(dhc_vit_df[col_vit_12_59], errors='coerce').fillna(0)
+
+            # Grouping by Bakuna Center & calculating total
+            vit_summary = dhc_vit_df.groupby(col_bakuna)[['Vit_6_11', 'Vit_12_59']].sum().reset_index()
+            vit_summary['Total Vit A'] = vit_summary['Vit_6_11'] + vit_summary['Vit_12_59']
+
+            # Column renaming for clear presentation
+            vit_summary.columns = [
+                'Bakuna Center Name', 
+                'Vit A 6-11mos [col Q]', 
+                'Vit A 12-59mos [col R]',
+                'Total Vit A'
+            ]
+
+            # SORT BY TOTAL DESCENDING
+            vit_summary = vit_summary.sort_values(by='Total Vit A', ascending=False)
+
+            # Calculate and append Total row for Table
+            total_vit_row = pd.DataFrame([{
+                'Bakuna Center Name': 'TOTAL',
+                'Vit A 6-11mos [col Q]': vit_summary['Vit A 6-11mos [col Q]'].sum(),
+                'Vit A 12-59mos [col R]': vit_summary['Vit A 12-59mos [col R]'].sum(),
+                'Total Vit A': vit_summary['Total Vit A'].sum()
+            }])
+
+            vit_summary_final = pd.concat([vit_summary, total_vit_row], ignore_index=True)
+            st.dataframe(vit_summary_final, use_container_width=True, hide_index=True)
+
+            # Horizontal Bar Chart for Vitamin A
+            fig_vit_bar = px.bar(
+                vit_summary.sort_values(by='Total Vit A', ascending=True), # ascending for chart so highest is on top
+                y='Bakuna Center Name',
+                x='Total Vit A',
+                orientation='h',
+                text='Total Vit A',
+                title='<b>Total Vitamin A Doses by Bakuna Center</b>',
+                color_discrete_sequence=['#2ca02c']
+            )
+            fig_vit_bar.update_traces(textposition='outside')
+            fig_vit_bar.update_layout(
+                xaxis_title="Total Doses",
+                yaxis_title="",
+                height=max(350, len(vit_summary) * 30),
+                margin=dict(l=10, r=20, t=40, b=20)
+            )
+            st.plotly_chart(fig_vit_bar, use_container_width=True)
+
+        else:
+            st.info("No Vitamin A data available for table aggregation.")
+            
     st.divider()
 
     # --- SECTION 4: BARANGAY BREAKDOWN CHARTS (PIE CHARTS) ---
