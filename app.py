@@ -258,7 +258,7 @@ if not df_raw.empty:
 
     st.divider()
 
-    # --- SECTION 2: OVERALL METRIC SUMMARY (SINGLE-ROW VIEW) ---
+    # --- SECTION 2: OVERALL METRIC SUMMARY ---
     st.header("Overall Metric Summary")
     col_summary1, col_summary2, col_summary3 = st.columns(3)
 
@@ -539,6 +539,81 @@ if not df_raw.empty:
                 )
                 fig_pie_mr_zero.update_traces(textposition='inside', textinfo='percent+label')
                 st.plotly_chart(fig_pie_mr_zero, use_container_width=True)
+
+    st.divider()
+
+    # --- SECTION 5: DEFERRAL AND REFUSAL ANALYSIS ---
+    st.header("Deferral and Refusal Analysis")
+
+    # Column U (Index 20) -> Total Deferrals
+    # Column V (Index 21) -> Total Refusals
+    col_deferrals = df_raw.columns[20] if len(df_raw.columns) > 20 else None
+    col_refusals = df_raw.columns[21] if len(df_raw.columns) > 21 else None
+
+    total_deferrals_val = pd.to_numeric(filtered_df[col_deferrals], errors='coerce').sum() if col_deferrals else 0
+    total_refusals_val = pd.to_numeric(filtered_df[col_refusals], errors='coerce').sum() if col_refusals else 0
+
+    def_col1, def_col2 = st.columns([1, 2])
+
+    with def_col1:
+        st.subheader("Summary Totals")
+        st.metric("Total Deferrals", f"{int(total_deferrals_val):,}")
+        st.metric("Total Refusals", f"{int(total_refusals_val):,}")
+
+    with def_col2:
+        def_ref_summary_df = pd.DataFrame([
+            {"Category": "Deferrals", "Total Count": int(total_deferrals_val)},
+            {"Category": "Refusals", "Total Count": int(total_refusals_val)}
+        ])
+        fig_def_ref = px.bar(
+            def_ref_summary_df,
+            x="Category",
+            y="Total Count",
+            color="Category",
+            text="Total Count",
+            title="Total Deferrals vs Refusals",
+            color_discrete_map={"Deferrals": "#f59e0b", "Refusals": "#ef4444"}
+        )
+        fig_def_ref.update_traces(textposition='auto')
+        fig_def_ref.update_layout(xaxis_title="", yaxis_title="Count", showlegend=False, height=300)
+        st.plotly_chart(fig_def_ref, use_container_width=True)
+
+    st.subheader("Reason Breakdown Tables")
+    tbl_col1, tbl_col2 = st.columns(2)
+
+    # Deferral Reasons: Column AB (27) to Column AO (40)
+    with tbl_col1:
+        st.markdown("#### Deferral Reasons")
+        def_reason_cols = df_raw.columns[27:41].tolist() if len(df_raw.columns) >= 41 else []
+        def_reasons_data = []
+
+        for col in def_reason_cols:
+            cnt = pd.to_numeric(filtered_df[col], errors='coerce').sum()
+            clean_name = str(col).replace("Deferral Reason -", "").replace("Deferral Reason:", "").strip()
+            def_reasons_data.append({"Deferral Reason": clean_name, "Count": int(cnt)})
+
+        if def_reasons_data:
+            def_reasons_df = pd.DataFrame(def_reasons_data).sort_values(by="Count", ascending=False)
+            st.dataframe(def_reasons_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("No Deferral Reason columns found (Columns AB:AO).")
+
+    # Refusal Reasons: Column AP (41) to Column AX (49)
+    with tbl_col2:
+        st.markdown("#### Refusal Reasons")
+        ref_reason_cols = df_raw.columns[41:50].tolist() if len(df_raw.columns) >= 50 else []
+        ref_reasons_data = []
+
+        for col in ref_reason_cols:
+            cnt = pd.to_numeric(filtered_df[col], errors='coerce').sum()
+            clean_name = str(col).replace("Refusal Reason -", "").replace("Refusal Reason:", "").strip()
+            ref_reasons_data.append({"Refusal Reason": clean_name, "Count": int(cnt)})
+
+        if ref_reasons_data:
+            ref_reasons_df = pd.DataFrame(ref_reasons_data).sort_values(by="Count", ascending=False)
+            st.dataframe(ref_reasons_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("No Refusal Reason columns found (Columns AP:AX).")
 
 else:
     st.warning("Unable to fetch data. Please check the spreadsheet URL or permissions.")
