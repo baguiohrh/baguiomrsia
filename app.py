@@ -85,10 +85,11 @@ else:
 
 if not df_raw.empty:
     # Identify key columns by position in main sheet
-    col_bakuna = df_raw.columns[5]    # Column F (Bakuna Center Name)
-    col_barangay = df_raw.columns[7]  # Column H (Barangay Name)
-    col_date = df_raw.columns[8]      # Column I (Vaccination Date)
-    col_response = df_raw.columns[9]  # Column J (Response Type)
+    col_city = df_raw.columns[4]       # Column E (City/Municipality)
+    col_bakuna = df_raw.columns[5]     # Column F (Bakuna Center Name)
+    col_barangay = df_raw.columns[7]   # Column H (Barangay Name)
+    col_date = df_raw.columns[8]       # Column I (Vaccination Date)
+    col_response = df_raw.columns[9]   # Column J (Response Type)
 
     # Specific Columns for MR (Columns K, L, M)
     col_mr_6_12 = df_raw.columns[10]   # Column K (MR 6-12 mos Total)
@@ -120,20 +121,28 @@ if not df_raw.empty:
     # --- SIDEBAR FILTERS ---
     st.sidebar.header("Filter Options")
 
-    # Filter 1: Bakuna Center Name [Column F]
-    bakuna_centers = sorted(df_raw[col_bakuna].dropna().astype(str).unique().tolist())
+    # Filter 1: City/Municipality [Column E]
+    cities = sorted(df_raw[col_city].dropna().astype(str).unique().tolist())
+    selected_city = st.sidebar.multiselect("City / Municipality", cities)
+
+    # Filter 2: Bakuna Center Name [Column F] (DEPENDENT ON CITY SELECTION)
+    if selected_city:
+        df_for_bakuna = df_raw[df_raw[col_city].astype(str).isin(selected_city)]
+    else:
+        df_for_bakuna = df_raw.copy()
+
+    bakuna_centers = sorted(df_for_bakuna[col_bakuna].dropna().astype(str).unique().tolist())
     selected_bakuna = st.sidebar.multiselect("Bakuna Center Name", bakuna_centers)
 
-    # Filter 2: Barangay Name [Column H] (DEPENDENT ON BAKUNA CENTER SELECTION)
+    # Filter 3: Barangay Name [Column H] (DEPENDENT ON CITY & BAKUNA CENTER SELECTION)
+    df_for_barangay = df_for_bakuna.copy()
     if selected_bakuna:
-        available_barangays_df = df_raw[df_raw[col_bakuna].astype(str).isin(selected_bakuna)]
-        barangays = sorted(available_barangays_df[col_barangay].dropna().astype(str).unique().tolist())
-    else:
-        barangays = sorted(df_raw[col_barangay].dropna().astype(str).unique().tolist())
+        df_for_barangay = df_for_barangay[df_for_barangay[col_bakuna].astype(str).isin(selected_bakuna)]
 
+    barangays = sorted(df_for_barangay[col_barangay].dropna().astype(str).unique().tolist())
     selected_barangay = st.sidebar.multiselect("Barangay Name", barangays)
 
-    # Filter 3: Vaccination Date Range [Column I]
+    # Filter 4: Vaccination Date Range [Column I]
     min_date = df_raw[col_date].min()
     max_date = df_raw[col_date].max()
     
@@ -149,6 +158,9 @@ if not df_raw.empty:
 
     # --- APPLY FILTERS TO ACCOMPLISHMENT DATA ---
     filtered_df = df_raw.copy()
+
+    if selected_city:
+        filtered_df = filtered_df[filtered_df[col_city].astype(str).isin(selected_city)]
 
     if selected_bakuna:
         filtered_df = filtered_df[filtered_df[col_bakuna].astype(str).isin(selected_bakuna)]
@@ -178,9 +190,12 @@ if not df_raw.empty:
     # --- APPLY FILTERS TO TARGET DATA ---
     filtered_target_df = df_target_raw.copy()
     if not filtered_target_df.empty:
+        t_city_col = next((c for c in filtered_target_df.columns if "city" in c.lower() or "municipality" in c.lower()), None)
         t_bakuna_col = next((c for c in filtered_target_df.columns if "bakuna" in c.lower()), None)
         t_barangay_col = next((c for c in filtered_target_df.columns if "barangay" in c.lower() and "code" not in c.lower()), None)
 
+        if selected_city and t_city_col:
+            filtered_target_df = filtered_target_df[filtered_target_df[t_city_col].astype(str).isin(selected_city)]
         if selected_bakuna and t_bakuna_col:
             filtered_target_df = filtered_target_df[filtered_target_df[t_bakuna_col].astype(str).isin(selected_bakuna)]
         if selected_barangay and t_barangay_col:
@@ -426,13 +441,10 @@ if not df_raw.empty:
             filter_t_6_59 = pd.to_numeric(filtered_target_df[col_t_6_59], errors='coerce').sum() if col_t_6_59 else 0
             t_val_6_59 = int(round((filter_t_6_59 / raw_t_6_59) * 25335)) if raw_t_6_59 > 0 else 25335
 
-        cols_acc_6_12 = [c for c in dose_cols if any(kw in c for kw in ["6-12", "6 - 12", "6-11", "6 - 11"])]
-        cols_acc_13_23 = [c for c in dose_cols if any(kw in c for kw in ["13-23", "13 - 23", "12-23"])]
-        cols_acc_24_59 = [c for c in dose_cols if any(kw in c for kw in ["24-59", "24 - 59"])]
-
-        acc_val_6_12 = filtered_df[cols_acc_6_12].apply(pd.to_numeric, errors='coerce').sum().sum() if cols_acc_6_12 else 0
-        acc_val_13_23 = filtered_df[cols_acc_13_23].apply(pd.to_numeric, errors='coerce').sum().sum() if cols_acc_13_23 else 0
-        acc_val_24_59 = filtered_df[cols_acc_24_59].apply(pd.to_numeric, errors='coerce').sum().sum() if cols_acc_24_59 else 0
+        # STRICT MAPPING FOR GAUGE ACCOMPLISHMENTS (Strictly Column K, L, M metrics from MR response)
+        acc_val_6_12 = pd.to_numeric(mr_df[col_mr_6_12], errors='coerce').sum()
+        acc_val_13_23 = pd.to_numeric(mr_df[col_mr_13_23], errors='coerce').sum()
+        acc_val_24_59 = pd.to_numeric(mr_df[col_mr_24_59], errors='coerce').sum()
         acc_val_6_59 = acc_val_6_12 + acc_val_13_23 + acc_val_24_59
 
         def create_gauge_chart(title, accomplishment, target, height=300, font_size=14, is_large=False):
@@ -491,19 +503,19 @@ if not df_raw.empty:
 
         with g_row1_col1:
             st.plotly_chart(
-                create_gauge_chart("6 - 12 mos Total [Col I]", acc_val_6_12, int(t_val_6_12)), 
+                create_gauge_chart("6 - 12 mos Total [Col K]", int(acc_val_6_12), int(t_val_6_12)), 
                 use_container_width=True
             )
 
         with g_row1_col2:
             st.plotly_chart(
-                create_gauge_chart("13 - 23 mos Total [Col L]", acc_val_13_23, int(t_val_13_23)), 
+                create_gauge_chart("13 - 23 mos Total [Col L]", int(acc_val_13_23), int(t_val_13_23)), 
                 use_container_width=True
             )
 
         with g_row1_col3:
             st.plotly_chart(
-                create_gauge_chart("24 - 59 mos Total [Col O]", acc_val_24_59, int(t_val_24_59)), 
+                create_gauge_chart("24 - 59 mos Total [Col M]", int(acc_val_24_59), int(t_val_24_59)), 
                 use_container_width=True
             )
 
@@ -512,7 +524,7 @@ if not df_raw.empty:
         st.plotly_chart(
             create_gauge_chart(
                 "Overall Target: 6 - 59 mos Total [Col F]", 
-                acc_val_6_59, 
+                int(acc_val_6_59), 
                 int(t_val_6_59), 
                 height=420, 
                 font_size=18, 
@@ -661,13 +673,11 @@ if not df_raw.empty:
     # --- SECTION 5: BARANGAY ACCOMPLISHMENT TABLE HEATMAP ---
     st.header("Barangay Accomplishment Table Heatmap")
 
-    # Define exact columns requested:
     heatmap_mr_cols = [col_mr_6_12, col_mr_13_23, col_mr_24_59]
     heatmap_vit_cols = [col_vit_6_11, col_vit_12_59]
 
     bgy_summary_records = []
     
-    # Use the filtered barangay list so heatmap stays aligned with filters
     heatmap_barangays = selected_barangay if selected_barangay else barangays
 
     for bgy in heatmap_barangays:
@@ -687,7 +697,6 @@ if not df_raw.empty:
     heatmap_df = heatmap_df.sort_values(by="Total Accomplishment", ascending=False)
 
     if not heatmap_df.empty:
-        # Export Button for Barangay Accomplishment Heatmap Data
         st.download_button(
             label="📥 Export Barangay Accomplishment Data (CSV)",
             data=convert_df_to_csv(heatmap_df),
@@ -696,7 +705,6 @@ if not df_raw.empty:
             key="download_bgy_heatmap_data"
         )
 
-        # Melt DataFrame for Plotly Heatmap
         heatmap_melted = heatmap_df.sort_values(by="Total Accomplishment", ascending=True).melt(
             id_vars=["Barangay"],
             value_vars=["MR (Cols K-M)", "Vitamin A (Cols Q-R)"],
@@ -714,15 +722,17 @@ if not df_raw.empty:
             title="<b>Barangay Accomplishment Heatmap (MR: Cols K-M | Vit A: Cols Q-R)</b>"
         )
 
-        dynamic_height = max(500, len(heatmap_df) * 22)
+        chart_pixel_height = max(450, len(heatmap_df) * 22)
         fig_table_heatmap.update_layout(
             xaxis_title="Vaccination Category",
             yaxis_title="Barangay Name",
-            height=dynamic_height,
+            height=chart_pixel_height,
             coloraxis_colorbar=dict(title="Doses"),
             margin=dict(l=10, r=10, t=50, b=20)
         )
-        st.plotly_chart(fig_table_heatmap, use_container_width=True)
+
+        with st.container(height=500):
+            st.plotly_chart(fig_table_heatmap, use_container_width=True)
     else:
         st.info("No barangay accomplishment data available to render table heatmap.")
 
