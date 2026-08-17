@@ -72,9 +72,24 @@ def load_data_as_of():
 def convert_df_to_csv(df):
     return df.to_csv(index=False).encode('utf-8')
 
+# Safe numeric cleanup (handles formatted strings with commas)
+def clean_numeric_sum(series):
+    if series is None or series.empty:
+        return 0
+    cleaned = series.astype(str).str.replace(",", "").str.strip()
+    return pd.to_numeric(cleaned, errors='coerce').fillna(0).sum()
+
 df_raw = load_data()
 df_target_raw = load_target_data()
 as_of_date, as_of_time = load_data_as_of()
+
+# --- DEBUG EXPANDER ---
+with st.expander("🔍 Debug: Inspect Target Sheet Columns & Data"):
+    if not df_target_raw.empty:
+        st.write("Target Sheet Columns:", df_target_raw.columns.tolist())
+        st.dataframe(df_target_raw.head())
+    else:
+        st.write("Target Sheet is empty or not loaded.")
 
 # --- DATA AS OF REMINDER BANNER ---
 timestamp_str = f"{as_of_date} {as_of_time}".strip()
@@ -190,8 +205,8 @@ if not df_raw.empty:
     # --- APPLY FILTERS TO TARGET DATA ---
     filtered_target_df = df_target_raw.copy()
     if not filtered_target_df.empty:
-        t_city_col = next((c for c in filtered_target_df.columns if "city" in c.lower() or "municipality" in c.lower()), None)
-        t_bakuna_col = next((c for c in filtered_target_df.columns if "bakuna" in c.lower()), None)
+        t_city_col = next((c for c in filtered_target_df.columns if any(k in c.lower() for k in ["city", "muni"])), None)
+        t_bakuna_col = next((c for c in filtered_target_df.columns if any(k in c.lower() for k in ["bakuna", "dhc", "center", "facility"])), None)
         t_barangay_col = next((c for c in filtered_target_df.columns if "barangay" in c.lower() and "code" not in c.lower()), None)
 
         if selected_city and t_city_col:
@@ -230,8 +245,8 @@ if not df_raw.empty:
     col_zero_doses = df_raw.columns[19]   # "Grand total doses administered (Zero dose)"
 
     # Base totals
-    total_doses = pd.to_numeric(filtered_df[col_total_doses], errors='coerce').sum()
-    total_zero_doses = pd.to_numeric(filtered_df[col_zero_doses], errors='coerce').sum()
+    total_doses = clean_numeric_sum(filtered_df[col_total_doses])
+    total_zero_doses = clean_numeric_sum(filtered_df[col_zero_doses])
 
     # Response specific filtered dataframes
     vit_a_df = filtered_df[response_series.str.contains("Vitamin A", case=False, na=False)]
@@ -241,13 +256,13 @@ if not df_raw.empty:
     vit_a_total = 0
     if vit_a_target_cols:
         for c in vit_a_target_cols:
-            vit_a_total += pd.to_numeric(vit_a_df[c], errors='coerce').sum()
+            vit_a_total += clean_numeric_sum(vit_a_df[c])
 
     # Calculate Total MR Response
     mr_total = 0
     if all_mr_cols:
         for c in all_mr_cols:
-            mr_total += pd.to_numeric(mr_df[c], errors='coerce').sum()
+            mr_total += clean_numeric_sum(mr_df[c])
 
     # Render 4 columns for Summary Cards
     col_m1, col_m2, col_m3, col_m4 = st.columns(4)
@@ -265,7 +280,7 @@ if not df_raw.empty:
     if vit_a_target_cols and not vit_a_df.empty:
         vit_a_df_clean = vit_a_df.dropna(subset=[col_date]).copy()
         vit_a_df_clean['Daily_Vit_A_Total'] = vit_a_df_clean[vit_a_target_cols].apply(
-            pd.to_numeric, errors='coerce'
+            lambda col: pd.to_numeric(col.astype(str).str.replace(",", "").str.strip(), errors='coerce')
         ).sum(axis=1)
         daily_vit_a = vit_a_df_clean.groupby(vit_a_df_clean[col_date].dt.date)['Daily_Vit_A_Total'].sum().reset_index()
 
@@ -273,7 +288,7 @@ if not df_raw.empty:
     if all_mr_cols and not mr_df.empty:
         mr_df_clean = mr_df.dropna(subset=[col_date]).copy()
         mr_df_clean['Daily_MR_Total'] = mr_df_clean[all_mr_cols].apply(
-            pd.to_numeric, errors='coerce'
+            lambda col: pd.to_numeric(col.astype(str).str.replace(",", "").str.strip(), errors='coerce')
         ).sum(axis=1)
         daily_mr = mr_df_clean.groupby(mr_df_clean[col_date].dt.date)['Daily_MR_Total'].sum().reset_index()
 
@@ -326,7 +341,7 @@ if not df_raw.empty:
         if vit_a_target_cols:
             vit_a_totals = []
             for col in vit_a_target_cols:
-                val = pd.to_numeric(vit_a_df[col], errors='coerce').sum()
+                val = clean_numeric_sum(vit_a_df[col])
                 vit_a_totals.append({"Metric": col.replace("Vitamin A ", "").replace(" Total", ""), "Total": int(val)})
 
             chart_data_vit_a = pd.DataFrame(vit_a_totals)
@@ -355,7 +370,7 @@ if not df_raw.empty:
         if mr_dose_cols:
             mr_totals = []
             for col in mr_dose_cols:
-                val = pd.to_numeric(mr_df[col], errors='coerce').sum()
+                val = clean_numeric_sum(mr_df[col])
                 mr_totals.append({"Age": col.replace("MR ", "").replace(" Total", ""), "Total": int(val)})
 
             chart_data_mr = pd.DataFrame(mr_totals)
@@ -384,7 +399,7 @@ if not df_raw.empty:
         if mr_zero_cols:
             mr_zero_totals = []
             for col in mr_zero_cols:
-                val = pd.to_numeric(mr_df[col], errors='coerce').sum()
+                val = clean_numeric_sum(mr_df[col])
                 mr_zero_totals.append({"Age": col.replace("MR Zero ", "").replace(" Total", ""), "Total": int(val)})
 
             chart_data_mr_zero = pd.DataFrame(mr_zero_totals)
@@ -414,37 +429,35 @@ if not df_raw.empty:
     st.header("Target Population vs Accomplishment Gauges")
 
     if not filtered_target_df.empty:
-        def safe_get_target_col(df, pos_idx, preferred_name_keyword):
-            if len(df.columns) > pos_idx and preferred_name_keyword.lower() in df.columns[pos_idx].lower():
+        # Helper function to get target column by 0-based index or keyword fallback
+        def get_target_col_by_index(df, pos_idx, keyword=""):
+            if len(df.columns) > pos_idx:
                 return df.columns[pos_idx]
-            matched = [c for c in df.columns if preferred_name_keyword.lower() in c.lower()]
-            return matched[0] if matched else None
+            if keyword:
+                matched = [c for c in df.columns if keyword.lower() in c.lower()]
+                return matched[0] if matched else None
+            return None
 
-        col_t_6_59 = safe_get_target_col(filtered_target_df, 5, "6 - 59")
-        col_t_6_12 = safe_get_target_col(filtered_target_df, 8, "6 - 12")
-        col_t_13_23 = safe_get_target_col(filtered_target_df, 11, "13 - 23")
-        col_t_24_59 = safe_get_target_col(filtered_target_df, 14, "24 - 59")
+        # Extract target columns based on specified Target sheet columns:
+        col_t_6_59 = get_target_col_by_index(filtered_target_df, 5, "6 - 59")   # Column F [col index 5]
+        col_t_6_12 = get_target_col_by_index(filtered_target_df, 8, "6 - 12")   # Column I [col index 8]
+        col_t_13_23 = get_target_col_by_index(filtered_target_df, 11, "13 - 23") # Column L [col index 11]
+        col_t_24_59 = get_target_col_by_index(filtered_target_df, 14, "24 - 59") # Column O [col index 14]
 
-        t_val_6_12 = pd.to_numeric(filtered_target_df[col_t_6_12], errors='coerce').sum() if col_t_6_12 else 0
-        t_val_13_23 = pd.to_numeric(filtered_target_df[col_t_13_23], errors='coerce').sum() if col_t_13_23 else 0
+        # Safely sum target values
+        t_val_6_12 = clean_numeric_sum(filtered_target_df[col_t_6_12]) if col_t_6_12 else 0
+        t_val_13_23 = clean_numeric_sum(filtered_target_df[col_t_13_23]) if col_t_13_23 else 0
+        t_val_24_59 = clean_numeric_sum(filtered_target_df[col_t_24_59]) if col_t_24_59 else 0
         
-        # Target totals override logic
-        if len(filtered_target_df) == len(df_target_raw):
-            t_val_24_59 = 16910
-            t_val_6_59 = 25335
+        if col_t_6_59:
+            t_val_6_59 = clean_numeric_sum(filtered_target_df[col_t_6_59])
         else:
-            raw_t_24_59 = pd.to_numeric(df_target_raw[col_t_24_59], errors='coerce').sum() if col_t_24_59 else 1
-            filter_t_24_59 = pd.to_numeric(filtered_target_df[col_t_24_59], errors='coerce').sum() if col_t_24_59 else 0
-            t_val_24_59 = int(round((filter_t_24_59 / raw_t_24_59) * 16910)) if raw_t_24_59 > 0 else 16910
+            t_val_6_59 = t_val_6_12 + t_val_13_23 + t_val_24_59
 
-            raw_t_6_59 = pd.to_numeric(df_target_raw[col_t_6_59], errors='coerce').sum() if col_t_6_59 else 1
-            filter_t_6_59 = pd.to_numeric(filtered_target_df[col_t_6_59], errors='coerce').sum() if col_t_6_59 else 0
-            t_val_6_59 = int(round((filter_t_6_59 / raw_t_6_59) * 25335)) if raw_t_6_59 > 0 else 25335
-
-        # STRICT MAPPING FOR GAUGE ACCOMPLISHMENTS (Strictly Column K, L, M metrics from MR response)
-        acc_val_6_12 = pd.to_numeric(mr_df[col_mr_6_12], errors='coerce').sum()
-        acc_val_13_23 = pd.to_numeric(mr_df[col_mr_13_23], errors='coerce').sum()
-        acc_val_24_59 = pd.to_numeric(mr_df[col_mr_24_59], errors='coerce').sum()
+        # STRICT MAPPING FOR GAUGE ACCOMPLISHMENTS (Columns K, L, M metrics from MR response in main sheet)
+        acc_val_6_12 = clean_numeric_sum(mr_df[col_mr_6_12]) if col_mr_6_12 else 0
+        acc_val_13_23 = clean_numeric_sum(mr_df[col_mr_13_23]) if col_mr_13_23 else 0
+        acc_val_24_59 = clean_numeric_sum(mr_df[col_mr_24_59]) if col_mr_24_59 else 0
         acc_val_6_59 = acc_val_6_12 + acc_val_13_23 + acc_val_24_59
 
         def create_gauge_chart(title, accomplishment, target, height=300, font_size=14, is_large=False):
@@ -498,24 +511,24 @@ if not df_raw.empty:
             )
             return fig
 
-        # Row 1: Age Brackets (6-12 mos, 13-23 mos, 24-59 mos side-by-side)
+        # Row 1: Age Brackets with corrected target & accomplishment column labels
         g_row1_col1, g_row1_col2, g_row1_col3 = st.columns(3)
 
         with g_row1_col1:
             st.plotly_chart(
-                create_gauge_chart("6 - 12 mos Total [Col K]", int(acc_val_6_12), int(t_val_6_12)), 
+                create_gauge_chart("6 - 12 mos Total<br><span style='font-size:0.8em;color:#64748b'>(Acc: Col K | Target: Col I)</span>", int(acc_val_6_12), int(t_val_6_12)), 
                 use_container_width=True
             )
 
         with g_row1_col2:
             st.plotly_chart(
-                create_gauge_chart("13 - 23 mos Total [Col L]", int(acc_val_13_23), int(t_val_13_23)), 
+                create_gauge_chart("13 - 23 mos Total<br><span style='font-size:0.8em;color:#64748b'>(Acc: Col L | Target: Col L)</span>", int(acc_val_13_23), int(t_val_13_23)), 
                 use_container_width=True
             )
 
         with g_row1_col3:
             st.plotly_chart(
-                create_gauge_chart("24 - 59 mos Total [Col M]", int(acc_val_24_59), int(t_val_24_59)), 
+                create_gauge_chart("24 - 59 mos Total<br><span style='font-size:0.8em;color:#64748b'>(Acc: Col M | Target: Col O)</span>", int(acc_val_24_59), int(t_val_24_59)), 
                 use_container_width=True
             )
 
@@ -523,7 +536,7 @@ if not df_raw.empty:
         st.markdown("<br>", unsafe_allow_html=True)
         st.plotly_chart(
             create_gauge_chart(
-                "Overall Target: 6 - 59 mos Total [Col F]", 
+                "Overall Target: 6 - 59 mos Total<br><span style='font-size:0.75em;color:#64748b'>(Target: Col F)</span>", 
                 int(acc_val_6_59), 
                 int(t_val_6_59), 
                 height=420, 
@@ -549,9 +562,9 @@ if not df_raw.empty:
         if not mr_df.empty:
             dhc_mr_df = mr_df.copy()
             
-            dhc_mr_df['MR_6_12'] = pd.to_numeric(dhc_mr_df[col_mr_6_12], errors='coerce').fillna(0)
-            dhc_mr_df['MR_13_23'] = pd.to_numeric(dhc_mr_df[col_mr_13_23], errors='coerce').fillna(0)
-            dhc_mr_df['MR_24_59'] = pd.to_numeric(dhc_mr_df[col_mr_24_59], errors='coerce').fillna(0)
+            dhc_mr_df['MR_6_12'] = pd.to_numeric(dhc_mr_df[col_mr_6_12].astype(str).str.replace(",", "").str.strip(), errors='coerce').fillna(0)
+            dhc_mr_df['MR_13_23'] = pd.to_numeric(dhc_mr_df[col_mr_13_23].astype(str).str.replace(",", "").str.strip(), errors='coerce').fillna(0)
+            dhc_mr_df['MR_24_59'] = pd.to_numeric(dhc_mr_df[col_mr_24_59].astype(str).str.replace(",", "").str.strip(), errors='coerce').fillna(0)
 
             mr_summary = dhc_mr_df.groupby(col_bakuna)[['MR_6_12', 'MR_13_23', 'MR_24_59']].sum().reset_index()
             mr_summary['Total MR'] = mr_summary['MR_6_12'] + mr_summary['MR_13_23'] + mr_summary['MR_24_59']
@@ -613,8 +626,8 @@ if not df_raw.empty:
         if not vit_a_df.empty:
             dhc_vit_df = vit_a_df.copy()
 
-            dhc_vit_df['Vit_6_11'] = pd.to_numeric(dhc_vit_df[col_vit_6_11], errors='coerce').fillna(0)
-            dhc_vit_df['Vit_12_59'] = pd.to_numeric(dhc_vit_df[col_vit_12_59], errors='coerce').fillna(0)
+            dhc_vit_df['Vit_6_11'] = pd.to_numeric(dhc_vit_df[col_vit_6_11].astype(str).str.replace(",", "").str.strip(), errors='coerce').fillna(0)
+            dhc_vit_df['Vit_12_59'] = pd.to_numeric(dhc_vit_df[col_vit_12_59].astype(str).str.replace(",", "").str.strip(), errors='coerce').fillna(0)
 
             vit_summary = dhc_vit_df.groupby(col_bakuna)[['Vit_6_11', 'Vit_12_59']].sum().reset_index()
             vit_summary['Total Vit A'] = vit_summary['Vit_6_11'] + vit_summary['Vit_12_59']
@@ -677,14 +690,18 @@ if not df_raw.empty:
     heatmap_vit_cols = [col_vit_6_11, col_vit_12_59]
 
     bgy_summary_records = []
-    
     heatmap_barangays = selected_barangay if selected_barangay else barangays
 
     for bgy in heatmap_barangays:
         bgy_data = filtered_df[filtered_df[col_barangay].astype(str) == bgy]
         
-        mr_doses_val = bgy_data[heatmap_mr_cols].apply(pd.to_numeric, errors='coerce').sum().sum()
-        vit_a_val = bgy_data[heatmap_vit_cols].apply(pd.to_numeric, errors='coerce').sum().sum()
+        mr_doses_val = bgy_data[heatmap_mr_cols].apply(
+            lambda col: pd.to_numeric(col.astype(str).str.replace(",", "").str.strip(), errors='coerce')
+        ).sum().sum()
+        
+        vit_a_val = bgy_data[heatmap_vit_cols].apply(
+            lambda col: pd.to_numeric(col.astype(str).str.replace(",", "").str.strip(), errors='coerce')
+        ).sum().sum()
 
         bgy_summary_records.append({
             "Barangay": bgy,
@@ -747,7 +764,7 @@ if not df_raw.empty:
         if vit_a_target_cols and not vit_a_df.empty:
             vit_a_bgy_df = vit_a_df.copy()
             vit_a_bgy_df['Total_Vit_A'] = vit_a_bgy_df[vit_a_target_cols].apply(
-                pd.to_numeric, errors='coerce'
+                lambda col: pd.to_numeric(col.astype(str).str.replace(",", "").str.strip(), errors='coerce')
             ).sum(axis=1)
             
             vit_a_bgy_summary = vit_a_bgy_df.groupby(col_barangay)['Total_Vit_A'].sum().reset_index()
@@ -772,7 +789,7 @@ if not df_raw.empty:
         if mr_dose_cols and not mr_df.empty:
             mr_bgy_df = mr_df.copy()
             mr_bgy_df['Total_MR_Doses'] = mr_bgy_df[mr_dose_cols].apply(
-                pd.to_numeric, errors='coerce'
+                lambda col: pd.to_numeric(col.astype(str).str.replace(",", "").str.strip(), errors='coerce')
             ).sum(axis=1)
             
             mr_bgy_summary = mr_bgy_df.groupby(col_barangay)['Total_MR_Doses'].sum().reset_index()
@@ -793,7 +810,7 @@ if not df_raw.empty:
         if mr_zero_cols and not mr_df.empty:
             mr_zero_bgy_df = mr_df.copy()
             mr_zero_bgy_df['Total_MR_Zero'] = mr_zero_bgy_df[mr_zero_cols].apply(
-                pd.to_numeric, errors='coerce'
+                lambda col: pd.to_numeric(col.astype(str).str.replace(",", "").str.strip(), errors='coerce')
             ).sum(axis=1)
             
             mr_zero_bgy_summary = mr_zero_bgy_df.groupby(col_barangay)['Total_MR_Zero'].sum().reset_index()
@@ -819,8 +836,8 @@ if not df_raw.empty:
     col_deferrals = df_raw.columns[20] if len(df_raw.columns) > 20 else None
     col_refusals = df_raw.columns[21] if len(df_raw.columns) > 21 else None
 
-    total_deferrals_val = pd.to_numeric(filtered_df[col_deferrals], errors='coerce').sum() if col_deferrals else 0
-    total_refusals_val = pd.to_numeric(filtered_df[col_refusals], errors='coerce').sum() if col_refusals else 0
+    total_deferrals_val = clean_numeric_sum(filtered_df[col_deferrals]) if col_deferrals else 0
+    total_refusals_val = clean_numeric_sum(filtered_df[col_refusals]) if col_refusals else 0
 
     def_col1, def_col2 = st.columns([1, 2])
 
@@ -856,7 +873,7 @@ if not df_raw.empty:
         def_reasons_data = []
 
         for col in def_reason_cols:
-            cnt = pd.to_numeric(filtered_df[col], errors='coerce').sum()
+            cnt = clean_numeric_sum(filtered_df[col])
             clean_name = str(col).replace("Deferral Reason -", "").replace("Deferral Reason:", "").strip()
             def_reasons_data.append({"Deferral Reason": clean_name, "Count": int(cnt)})
 
@@ -880,7 +897,7 @@ if not df_raw.empty:
         ref_reasons_data = []
 
         for col in ref_reason_cols:
-            cnt = pd.to_numeric(filtered_df[col], errors='coerce').sum()
+            cnt = clean_numeric_sum(filtered_df[col])
             clean_name = str(col).replace("Refusal Reason -", "").replace("Refusal Reason:", "").strip()
             ref_reasons_data.append({"Refusal Reason": clean_name, "Count": int(cnt)})
 
