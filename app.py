@@ -26,8 +26,9 @@ def load_data():
         df.columns = df.columns.astype(str).str.strip()
         
         # Convert Column I (Vaccination Date - 0-indexed column 8) to datetime
-        date_col = df.columns[8] 
-        df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+        if len(df.columns) > 8:
+            date_col = df.columns[8] 
+            df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
         
         return df
     except Exception as e:
@@ -72,7 +73,7 @@ def load_data_as_of():
 def convert_df_to_csv(df):
     return df.to_csv(index=False).encode('utf-8')
 
-# Safe numeric cleanup (handles formatted strings with commas)
+# Safe numeric cleanup (handles formatted strings with commas and empty dataframes)
 def clean_numeric_sum(series):
     if series is None or series.empty:
         return 0
@@ -157,16 +158,25 @@ if not df_raw.empty:
     barangays = sorted(df_for_barangay[col_barangay].dropna().astype(str).unique().tolist())
     selected_barangay = st.sidebar.multiselect("Barangay Name", barangays)
 
-    # Filter 4: Vaccination Date Range [Column I]
-    min_date = df_raw[col_date].min()
-    max_date = df_raw[col_date].max()
+    # Filter 4: Vaccination Date Range [Column I] (SAFE FROM NULL/EMPTY ERRS)
+    valid_dates = df_raw[col_date].dropna() if col_date in df_raw.columns else pd.Series()
     
-    if pd.notnull(min_date) and pd.notnull(max_date):
+    if not valid_dates.empty:
+        min_date_val = valid_dates.min()
+        max_date_val = valid_dates.max()
+        
+        if pd.notna(min_date_val) and pd.notna(max_date_val):
+            default_start = min_date_val.date()
+            default_end = max_date_val.date()
+        else:
+            default_start = pd.Timestamp.now().date()
+            default_end = pd.Timestamp.now().date()
+            
         selected_date_range = st.sidebar.date_input(
             "Vaccination Date Range",
-            value=(min_date.date(), max_date.date()),
-            min_value=min_date.date(),
-            max_value=max_date.date()
+            value=(default_start, default_end),
+            min_value=default_start,
+            max_value=default_end
         )
     else:
         selected_date_range = []
@@ -183,9 +193,14 @@ if not df_raw.empty:
     if selected_barangay:
         filtered_df = filtered_df[filtered_df[col_barangay].astype(str).isin(selected_barangay)]
 
-    if len(selected_date_range) == 2:
+    # Safe Date Filter Application
+    if len(selected_date_range) == 2 and col_date in filtered_df.columns and not filtered_df.empty:
         start_date, end_date = selected_date_range
+        if not pd.api.types.is_datetime64_any_dtype(filtered_df[col_date]):
+            filtered_df[col_date] = pd.to_datetime(filtered_df[col_date], errors='coerce')
+            
         filtered_df = filtered_df[
+            filtered_df[col_date].dt.date.notna() & 
             (filtered_df[col_date].dt.date >= start_date) & 
             (filtered_df[col_date].dt.date <= end_date)
         ]
@@ -202,22 +217,8 @@ if not df_raw.empty:
         key="download_filtered_raw"
     )
 
-    # --- APPLY FILTERS TO TARGET DATA ---
-    filtered_target_df = df_target_raw.copy()
-    if not filtered_target_df.empty:
-        t_city_col = next((c for c in filtered_target_df.columns if any(k in c.lower() for k in ["city", "muni"])), None)
-        t_bakuna_col = next((c for c in filtered_target_df.columns if any(k in c.lower() for k in ["bakuna", "dhc", "center", "facility"])), None)
-        t_barangay_col = next((c for c in filtered_target_df.columns if "barangay" in c.lower() and "code" not in c.lower()), None)
-
-        if selected_city and t_city_col:
-            filtered_target_df = filtered_target_df[filtered_target_df[t_city_col].astype(str).isin(selected_city)]
-        if selected_bakuna and t_bakuna_col:
-            filtered_target_df = filtered_target_df[filtered_target_df[t_bakuna_col].astype(str).isin(selected_bakuna)]
-        if selected_barangay and t_barangay_col:
-            filtered_target_df = filtered_target_df[filtered_target_df[t_barangay_col].astype(str).isin(selected_barangay)]
-
     # Convert response column safely to string
-    response_series = filtered_df[col_response].astype(str)
+    response_series = filtered_df[col_response].astype(str) if not filtered_df.empty else pd.Series(dtype=str)
 
     # --- TARGET COLUMNS SELECTION (Main Sheet) ---
     vit_a_target_cols = [
@@ -235,7 +236,6 @@ if not df_raw.empty:
         if "Zero" in c and any(age in c for age in ["6-12", "13-23", "24-59"])
     ]
 
-    # Combine MR Doses and MR Zero Doses
     all_mr_cols = mr_dose_cols + mr_zero_cols
 
     # --- GRAND TOTAL CARDS ---
@@ -245,22 +245,22 @@ if not df_raw.empty:
     col_zero_doses = df_raw.columns[19]   # "Grand total doses administered (Zero dose)"
 
     # Base totals
-    total_doses = clean_numeric_sum(filtered_df[col_total_doses])
-    total_zero_doses = clean_numeric_sum(filtered_df[col_zero_doses])
+    total_doses = clean_numeric_sum(filtered_df[col_total_doses]) if not filtered_df.empty else 0
+    total_zero_doses = clean_numeric_sum(filtered_df[col_zero_doses]) if not filtered_df.empty else 0
 
     # Response specific filtered dataframes
-    vit_a_df = filtered_df[response_series.str.contains("Vitamin A", case=False, na=False)]
-    mr_df = filtered_df[response_series.str.contains("Measles|MR", case=False, na=False)]
+    vit_a_df = filtered_df[response_series.str.contains("Vitamin A", case=False, na=False)] if not filtered_df.empty else pd.DataFrame()
+    mr_df = filtered_df[response_series.str.contains("Measles|MR", case=False, na=False)] if not filtered_df.empty else pd.DataFrame()
 
     # Calculate Total Vitamin A Response
     vit_a_total = 0
-    if vit_a_target_cols:
+    if vit_a_target_cols and not vit_a_df.empty:
         for c in vit_a_target_cols:
             vit_a_total += clean_numeric_sum(vit_a_df[c])
 
     # Calculate Total MR Response
     mr_total = 0
-    if all_mr_cols:
+    if all_mr_cols and not mr_df.empty:
         for c in all_mr_cols:
             mr_total += clean_numeric_sum(mr_df[c])
 
@@ -279,21 +279,34 @@ if not df_raw.empty:
     daily_vit_a = pd.DataFrame()
     if vit_a_target_cols and not vit_a_df.empty:
         vit_a_df_clean = vit_a_df.dropna(subset=[col_date]).copy()
-        vit_a_df_clean['Daily_Vit_A_Total'] = vit_a_df_clean[vit_a_target_cols].apply(
-            lambda col: pd.to_numeric(col.astype(str).str.replace(",", "").str.strip(), errors='coerce')
-        ).sum(axis=1)
-        daily_vit_a = vit_a_df_clean.groupby(vit_a_df_clean[col_date].dt.date)['Daily_Vit_A_Total'].sum().reset_index()
+        if not vit_a_df_clean.empty:
+            vit_a_df_clean['Daily_Vit_A_Total'] = vit_a_df_clean[vit_a_target_cols].apply(
+                lambda col: pd.to_numeric(col.astype(str).str.replace(",", "").str.strip(), errors='coerce')
+            ).sum(axis=1)
+            daily_vit_a = vit_a_df_clean.groupby(vit_a_df_clean[col_date].dt.date)['Daily_Vit_A_Total'].sum().reset_index()
 
     daily_mr = pd.DataFrame()
     if all_mr_cols and not mr_df.empty:
         mr_df_clean = mr_df.dropna(subset=[col_date]).copy()
-        mr_df_clean['Daily_MR_Total'] = mr_df_clean[all_mr_cols].apply(
-            lambda col: pd.to_numeric(col.astype(str).str.replace(",", "").str.strip(), errors='coerce')
-        ).sum(axis=1)
-        daily_mr = mr_df_clean.groupby(mr_df_clean[col_date].dt.date)['Daily_MR_Total'].sum().reset_index()
+        if not mr_df_clean.empty:
+            mr_df_clean['Daily_MR_Total'] = mr_df_clean[all_mr_cols].apply(
+                lambda col: pd.to_numeric(col.astype(str).str.replace(",", "").str.strip(), errors='coerce')
+            ).sum(axis=1)
+            daily_mr = mr_df_clean.groupby(mr_df_clean[col_date].dt.date)['Daily_MR_Total'].sum().reset_index()
 
-    if not daily_vit_a.empty or not daily_mr.empty:
+    # --- SAFE MERGE LOGIC ---
+    if not daily_vit_a.empty and not daily_mr.empty:
         daily_trend_df = pd.merge(daily_vit_a, daily_mr, on=col_date, how='outer').fillna(0)
+    elif not daily_vit_a.empty:
+        daily_trend_df = daily_vit_a.copy()
+        daily_trend_df['Daily_MR_Total'] = 0
+    elif not daily_mr.empty:
+        daily_trend_df = daily_mr.copy()
+        daily_trend_df['Daily_Vit_A_Total'] = 0
+    else:
+        daily_trend_df = pd.DataFrame()
+
+    if not daily_trend_df.empty:
         daily_trend_df = daily_trend_df.sort_values(by=col_date)
 
         daily_melted = daily_trend_df.melt(
@@ -328,7 +341,7 @@ if not df_raw.empty:
         )
         st.plotly_chart(fig_line, use_container_width=True)
     else:
-        st.info("No daily date data available to render line chart trends.")
+        st.info("No daily date data available for the selected filter criteria.")
 
     st.divider()
 
@@ -341,7 +354,7 @@ if not df_raw.empty:
         if vit_a_target_cols:
             vit_a_totals = []
             for col in vit_a_target_cols:
-                val = clean_numeric_sum(vit_a_df[col])
+                val = clean_numeric_sum(vit_a_df[col]) if not vit_a_df.empty else 0
                 vit_a_totals.append({"Metric": col.replace("Vitamin A ", "").replace(" Total", ""), "Total": int(val)})
 
             chart_data_vit_a = pd.DataFrame(vit_a_totals)
@@ -370,7 +383,7 @@ if not df_raw.empty:
         if mr_dose_cols:
             mr_totals = []
             for col in mr_dose_cols:
-                val = clean_numeric_sum(mr_df[col])
+                val = clean_numeric_sum(mr_df[col]) if not mr_df.empty else 0
                 mr_totals.append({"Age": col.replace("MR ", "").replace(" Total", ""), "Total": int(val)})
 
             chart_data_mr = pd.DataFrame(mr_totals)
@@ -399,7 +412,7 @@ if not df_raw.empty:
         if mr_zero_cols:
             mr_zero_totals = []
             for col in mr_zero_cols:
-                val = clean_numeric_sum(mr_df[col])
+                val = clean_numeric_sum(mr_df[col]) if not mr_df.empty else 0
                 mr_zero_totals.append({"Age": col.replace("MR Zero ", "").replace(" Total", ""), "Total": int(val)})
 
             chart_data_mr_zero = pd.DataFrame(mr_zero_totals)
@@ -428,8 +441,7 @@ if not df_raw.empty:
     # --- SECTION 3: ACCOMPLISHMENT PERCENTAGE VS TARGET (GAUGE CHARTS) ---
     st.header("Target Population vs Accomplishment Gauges")
 
-    if not filtered_target_df.empty:
-        # Helper function to get target column by 0-based index or keyword fallback
+    if not df_target_raw.empty:
         def get_target_col_by_index(df, pos_idx, keyword=""):
             if len(df.columns) > pos_idx:
                 return df.columns[pos_idx]
@@ -438,26 +450,46 @@ if not df_raw.empty:
                 return matched[0] if matched else None
             return None
 
-        # Extract target columns based on specified Target sheet columns:
-        col_t_6_59 = get_target_col_by_index(filtered_target_df, 5, "6 - 59")   # Column F [col index 5]
-        col_t_6_12 = get_target_col_by_index(filtered_target_df, 8, "6 - 12")   # Column I [col index 8]
-        col_t_13_23 = get_target_col_by_index(filtered_target_df, 11, "13 - 23") # Column L [col index 11]
-        col_t_24_59 = get_target_col_by_index(filtered_target_df, 14, "24 - 59") # Column O [col index 14]
+        t_barangay_col = get_target_col_by_index(df_target_raw, 1, "barangay")
+        t_city_col = next((c for c in df_target_raw.columns if any(k in c.lower() for k in ["city", "muni"])), None)
+        t_bakuna_col = next((c for c in df_target_raw.columns if any(k in c.lower() for k in ["bakuna", "dhc", "center", "facility"])), None)
 
-        # Safely sum target values
-        t_val_6_12 = clean_numeric_sum(filtered_target_df[col_t_6_12]) if col_t_6_12 else 0
-        t_val_13_23 = clean_numeric_sum(filtered_target_df[col_t_13_23]) if col_t_13_23 else 0
-        t_val_24_59 = clean_numeric_sum(filtered_target_df[col_t_24_59]) if col_t_24_59 else 0
+        col_t_6_59 = get_target_col_by_index(df_target_raw, 5, "6 - 59")
+        col_t_6_12 = get_target_col_by_index(df_target_raw, 8, "6 - 12")
+        col_t_13_23 = get_target_col_by_index(df_target_raw, 11, "13 - 23")
+        col_t_24_59 = get_target_col_by_index(df_target_raw, 14, "24 - 59")
+
+        gauge_target_df = df_target_raw.copy()
+
+        if selected_barangay and t_barangay_col:
+            selected_bgy_clean = [str(b).strip().upper() for b in selected_barangay]
+            gauge_target_df = gauge_target_df[
+                gauge_target_df[t_barangay_col].astype(str).str.strip().str.upper().isin(selected_bgy_clean)
+            ]
+        else:
+            if selected_city and t_city_col:
+                selected_city_clean = [str(c).strip().upper() for c in selected_city]
+                gauge_target_df = gauge_target_df[
+                    gauge_target_df[t_city_col].astype(str).str.strip().str.upper().isin(selected_city_clean)
+                ]
+            if selected_bakuna and t_bakuna_col:
+                selected_bakuna_clean = [str(b).strip().upper() for b in selected_bakuna]
+                gauge_target_df = gauge_target_df[
+                    gauge_target_df[t_bakuna_col].astype(str).str.strip().str.upper().isin(selected_bakuna_clean)
+                ]
+
+        t_val_6_12 = clean_numeric_sum(gauge_target_df[col_t_6_12]) if col_t_6_12 else 0
+        t_val_13_23 = clean_numeric_sum(gauge_target_df[col_t_13_23]) if col_t_13_23 else 0
+        t_val_24_59 = clean_numeric_sum(gauge_target_df[col_t_24_59]) if col_t_24_59 else 0
         
         if col_t_6_59:
-            t_val_6_59 = clean_numeric_sum(filtered_target_df[col_t_6_59])
+            t_val_6_59 = clean_numeric_sum(gauge_target_df[col_t_6_59])
         else:
             t_val_6_59 = t_val_6_12 + t_val_13_23 + t_val_24_59
 
-        # STRICT MAPPING FOR GAUGE ACCOMPLISHMENTS (Columns K, L, M metrics from MR response in main sheet)
-        acc_val_6_12 = clean_numeric_sum(mr_df[col_mr_6_12]) if col_mr_6_12 else 0
-        acc_val_13_23 = clean_numeric_sum(mr_df[col_mr_13_23]) if col_mr_13_23 else 0
-        acc_val_24_59 = clean_numeric_sum(mr_df[col_mr_24_59]) if col_mr_24_59 else 0
+        acc_val_6_12 = clean_numeric_sum(mr_df[col_mr_6_12]) if (not mr_df.empty and col_mr_6_12) else 0
+        acc_val_13_23 = clean_numeric_sum(mr_df[col_mr_13_23]) if (not mr_df.empty and col_mr_13_23) else 0
+        acc_val_24_59 = clean_numeric_sum(mr_df[col_mr_24_59]) if (not mr_df.empty and col_mr_24_59) else 0
         acc_val_6_59 = acc_val_6_12 + acc_val_13_23 + acc_val_24_59
 
         def create_gauge_chart(title, accomplishment, target, height=300, font_size=14, is_large=False):
@@ -511,7 +543,6 @@ if not df_raw.empty:
             )
             return fig
 
-        # Row 1: Age Brackets with corrected target & accomplishment column labels
         g_row1_col1, g_row1_col2, g_row1_col3 = st.columns(3)
 
         with g_row1_col1:
@@ -532,7 +563,6 @@ if not df_raw.empty:
                 use_container_width=True
             )
 
-        # Row 2: Larger overall summary chart (6-59 mos)
         st.markdown("<br>", unsafe_allow_html=True)
         st.plotly_chart(
             create_gauge_chart(
@@ -590,7 +620,6 @@ if not df_raw.empty:
             mr_summary_final = pd.concat([mr_summary, total_row], ignore_index=True)
             st.dataframe(mr_summary_final, use_container_width=True, hide_index=True)
 
-            # Export Button for MR Summary
             st.download_button(
                 label="📥 Export MR Table (CSV)",
                 data=convert_df_to_csv(mr_summary_final),
@@ -618,7 +647,7 @@ if not df_raw.empty:
             st.plotly_chart(fig_mr_bar, use_container_width=True)
 
         else:
-            st.info("No Measles-Rubella data available for table aggregation.")
+            st.info("No Measles-Rubella data available for the selected filters.")
 
     # 2. Vitamin A Table & Chart
     with dhc_col2:
@@ -651,7 +680,6 @@ if not df_raw.empty:
             vit_summary_final = pd.concat([vit_summary, total_vit_row], ignore_index=True)
             st.dataframe(vit_summary_final, use_container_width=True, hide_index=True)
 
-            # Export Button for Vitamin A Summary
             st.download_button(
                 label="📥 Export Vitamin A Table (CSV)",
                 data=convert_df_to_csv(vit_summary_final),
@@ -679,7 +707,7 @@ if not df_raw.empty:
             st.plotly_chart(fig_vit_bar, use_container_width=True)
 
         else:
-            st.info("No Vitamin A data available for table aggregation.")
+            st.info("No Vitamin A data available for the selected filters.")
 
     st.divider()
 
@@ -693,15 +721,19 @@ if not df_raw.empty:
     heatmap_barangays = selected_barangay if selected_barangay else barangays
 
     for bgy in heatmap_barangays:
-        bgy_data = filtered_df[filtered_df[col_barangay].astype(str) == bgy]
-        
-        mr_doses_val = bgy_data[heatmap_mr_cols].apply(
-            lambda col: pd.to_numeric(col.astype(str).str.replace(",", "").str.strip(), errors='coerce')
-        ).sum().sum()
-        
-        vit_a_val = bgy_data[heatmap_vit_cols].apply(
-            lambda col: pd.to_numeric(col.astype(str).str.replace(",", "").str.strip(), errors='coerce')
-        ).sum().sum()
+        if not filtered_df.empty:
+            bgy_data = filtered_df[filtered_df[col_barangay].astype(str) == bgy]
+            
+            mr_doses_val = bgy_data[heatmap_mr_cols].apply(
+                lambda col: pd.to_numeric(col.astype(str).str.replace(",", "").str.strip(), errors='coerce')
+            ).sum().sum() if not bgy_data.empty else 0
+            
+            vit_a_val = bgy_data[heatmap_vit_cols].apply(
+                lambda col: pd.to_numeric(col.astype(str).str.replace(",", "").str.strip(), errors='coerce')
+            ).sum().sum() if not bgy_data.empty else 0
+        else:
+            mr_doses_val = 0
+            vit_a_val = 0
 
         bgy_summary_records.append({
             "Barangay": bgy,
@@ -711,9 +743,9 @@ if not df_raw.empty:
         })
 
     heatmap_df = pd.DataFrame(bgy_summary_records)
-    heatmap_df = heatmap_df.sort_values(by="Total Accomplishment", ascending=False)
-
-    if not heatmap_df.empty:
+    
+    if not heatmap_df.empty and heatmap_df["Total Accomplishment"].sum() > 0:
+        heatmap_df = heatmap_df.sort_values(by="Total Accomplishment", ascending=False)
         st.download_button(
             label="📥 Export Barangay Accomplishment Data (CSV)",
             data=convert_df_to_csv(heatmap_df),
@@ -751,7 +783,7 @@ if not df_raw.empty:
         with st.container(height=500):
             st.plotly_chart(fig_table_heatmap, use_container_width=True)
     else:
-        st.info("No barangay accomplishment data available to render table heatmap.")
+        st.info("No recorded accomplishments found for the selected barangay(s).")
 
     st.divider()
 
@@ -782,7 +814,9 @@ if not df_raw.empty:
                 fig_pie_vit_a.update_traces(textposition='inside', textinfo='percent+label')
                 st.plotly_chart(fig_pie_vit_a, use_container_width=True)
             else:
-                st.info("No Vitamin A data recorded for the selected barangays.")
+                st.info("No Vitamin A data recorded for the selected selection.")
+        else:
+            st.info("No Vitamin A data recorded for the selected selection.")
 
     with b_right_col:
         st.subheader("Measles-Rubella (MR) Distribution by Barangay")
@@ -806,6 +840,8 @@ if not df_raw.empty:
                 )
                 fig_pie_mr.update_traces(textposition='inside', textinfo='percent+label')
                 st.plotly_chart(fig_pie_mr, use_container_width=True)
+        else:
+            st.info("No MR Doses recorded for the selected selection.")
 
         if mr_zero_cols and not mr_df.empty:
             mr_zero_bgy_df = mr_df.copy()
@@ -836,8 +872,8 @@ if not df_raw.empty:
     col_deferrals = df_raw.columns[20] if len(df_raw.columns) > 20 else None
     col_refusals = df_raw.columns[21] if len(df_raw.columns) > 21 else None
 
-    total_deferrals_val = clean_numeric_sum(filtered_df[col_deferrals]) if col_deferrals else 0
-    total_refusals_val = clean_numeric_sum(filtered_df[col_refusals]) if col_refusals else 0
+    total_deferrals_val = clean_numeric_sum(filtered_df[col_deferrals]) if (not filtered_df.empty and col_deferrals) else 0
+    total_refusals_val = clean_numeric_sum(filtered_df[col_refusals]) if (not filtered_df.empty and col_refusals) else 0
 
     def_col1, def_col2 = st.columns([1, 2])
 
@@ -873,7 +909,7 @@ if not df_raw.empty:
         def_reasons_data = []
 
         for col in def_reason_cols:
-            cnt = clean_numeric_sum(filtered_df[col])
+            cnt = clean_numeric_sum(filtered_df[col]) if not filtered_df.empty else 0
             clean_name = str(col).replace("Deferral Reason -", "").replace("Deferral Reason:", "").strip()
             def_reasons_data.append({"Deferral Reason": clean_name, "Count": int(cnt)})
 
@@ -897,7 +933,7 @@ if not df_raw.empty:
         ref_reasons_data = []
 
         for col in ref_reason_cols:
-            cnt = clean_numeric_sum(filtered_df[col])
+            cnt = clean_numeric_sum(filtered_df[col]) if not filtered_df.empty else 0
             clean_name = str(col).replace("Refusal Reason -", "").replace("Refusal Reason:", "").strip()
             ref_reasons_data.append({"Refusal Reason": clean_name, "Count": int(cnt)})
 
