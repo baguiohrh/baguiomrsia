@@ -130,6 +130,7 @@ if not df_raw.empty:
     - 🗺️ [Barangay Table Heatmap](#barangay-accomplishment-table-heatmap)
     - 🥧 [Share by Barangay](#accomplishment-share-by-barangay)
     - ⚠️ [Deferral & Refusal Analysis](#deferral-and-refusal-analysis)
+    - 📋 [Pending Barangay Submissions](#pending-barangay-submissions)
     """)
 
     st.sidebar.markdown("---")
@@ -950,6 +951,72 @@ if not df_raw.empty:
             )
         else:
             st.info("No Refusal Reason columns found (Columns AP:AX).")
+
+    st.divider()
+
+    # --- SECTION 8: PENDING BARANGAY SUBMISSIONS ---
+    st.header("Pending Barangay Submissions")
+
+    if not df_target_raw.empty and len(df_target_raw.columns) > 1:
+        # Extract target barangay names from Target Sheet Column B (index 1)
+        target_bgy_col = df_target_raw.columns[1]
+        all_target_bgys = df_target_raw[target_bgy_col].dropna().astype(str).str.strip().unique().tolist()
+        
+        # Standardize target names for matching
+        all_target_bgys = sorted([b for b in all_target_bgys if b and b.upper() != "NAN"])
+
+        if all_target_bgys:
+            # Extract distinct Response Types from rawdata Sheet Column J (col_response)
+            response_types = sorted(df_raw[col_response].dropna().astype(str).str.strip().unique().tolist())
+            response_types = [r for r in response_types if r and r.upper() != "NAN"]
+
+            if response_types:
+                tabs = st.tabs([f"📌 {resp}" for resp in response_types])
+
+                for tab, resp_type in zip(tabs, response_types):
+                    with tab:
+                        # Get barangays that HAVE submitted for this Response Type
+                        submitted_bgys = df_raw[
+                            df_raw[col_response].astype(str).str.strip() == resp_type
+                        ][col_barangay].dropna().astype(str).str.strip().unique()
+
+                        submitted_bgys_clean = set(b.upper() for b in submitted_bgys)
+
+                        # Determine barangays from Target sheet that have NOT submitted
+                        pending_bgys = [
+                            bgy for bgy in all_target_bgys 
+                            if bgy.upper() not in submitted_bgys_clean
+                        ]
+
+                        st.markdown(f"**Total Target Barangays:** `{len(all_target_bgys)}` | "
+                                    f"**Submitted:** `{len(all_target_bgys) - len(pending_bgys)}` | "
+                                    f"**Pending:** `{len(pending_bgys)}`")
+
+                        if pending_bgys:
+                            pending_df = pd.DataFrame({
+                                "No.": range(1, len(pending_bgys) + 1),
+                                "Barangay Name": pending_bgys,
+                                "Response Type": resp_type,
+                                "Status": "Not Yet Submitted"
+                            })
+
+                            st.dataframe(pending_df, use_container_width=True, hide_index=True)
+
+                            st.download_button(
+                                label=f"📥 Download Pending List ({resp_type})",
+                                data=convert_df_to_csv(pending_df),
+                                file_name=f"pending_barangays_{resp_type.lower().replace(' ', '_')}.csv",
+                                mime="text/csv",
+                                key=f"download_pending_{resp_type}"
+                            )
+                        else:
+                            st.success(f"🎉 All target barangays have submitted reports for **{resp_type}**!")
+            else:
+                st.info("No Response Types found in rawdata sheet Column J.")
+        else:
+            st.info("No valid Barangay names found in Target sheet Column B.")
+    else:
+        st.warning("Target sheet is empty or does not contain Column B (Barangay Name).")
 
 else:
     st.warning("Unable to fetch data. Please check the spreadsheet URL or permissions.")
