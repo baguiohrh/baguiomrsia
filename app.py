@@ -911,7 +911,7 @@ if not df_raw.empty:
     st.header("Accomplishment Share by Barangay")
     b_left_col, b_right_col = st.columns(2)
 
-    with b_left_col:
+    with b_right_col:
         st.subheader("Vitamin A Distribution by Barangay")
         if vit_a_target_cols and not vit_a_df.empty:
             vit_a_bgy_df = vit_a_df.copy()
@@ -938,7 +938,7 @@ if not df_raw.empty:
         else:
             st.info("No Vitamin A data recorded for the selected selection.")
 
-    with b_right_col:
+    with b_left_col:
         st.subheader("Measles-Rubella (MR) Distribution by Barangay")
         if mr_dose_cols and not mr_df.empty:
             mr_bgy_df = mr_df.copy()
