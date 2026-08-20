@@ -442,26 +442,84 @@ if not df_raw.empty:
     # --- SECTION 3: ACCOMPLISHMENT PERCENTAGE VS TARGET (GAUGE CHARTS) ---
     st.header("Target Population vs Accomplishment Gauges")
 
-    if not df_target_raw.empty:
-        def get_target_col_by_index(df, pos_idx, keyword=""):
-            if len(df.columns) > pos_idx:
-                return df.columns[pos_idx]
-            if keyword:
-                matched = [c for c in df.columns if keyword.lower() in c.lower()]
-                return matched[0] if matched else None
-            return None
+    # Helper function to create gauge charts
+    def create_gauge_chart(title, accomplishment, target, height=300, font_size=14, is_large=False):
+        pct = round((accomplishment / target * 100), 1) if target > 0 else 0
+        max_axis_val = max(target, accomplishment) * 1.15 if target > 0 else 100
 
-        t_barangay_col = get_target_col_by_index(df_target_raw, 1, "barangay")
+        fig = go.Figure(go.Indicator(
+            mode="gauge+number+delta",
+            value=accomplishment,
+            number={'valueformat': ',d', 'font': {'size': 36 if is_large else 28}},
+            domain={'x': [0.05, 0.95], 'y': [0.05, 0.70]},
+            title={
+                'text': f"<b>{title}</b><br><span style='font-size:{0.95 if is_large else 0.85}em;color:#475569'>{pct}% of Target ({target:,})</span>", 
+                'font': {'size': font_size},
+                'align': 'center'
+            },
+            delta={
+                'reference': target, 
+                'relative': False, 
+                'valueformat': ',d', 
+                'increasing': {'color': "#16a34a"}
+            },
+            gauge={
+                'axis': {
+                    'range': [0, max_axis_val], 
+                    'tickwidth': 1, 
+                    'tickcolor': "#334155",
+                    'tickformat': ',d'
+                },
+                'bar': {'color': "#0284c7"},
+                'bgcolor': "white",
+                'borderwidth': 1.5,
+                'bordercolor': "#cbd5e1",
+                'steps': [
+                    {'range': [0, target * 0.5], 'color': '#fee2e2'},
+                    {'range': [target * 0.5, target * 0.9], 'color': '#fef3c7'},
+                    {'range': [target * 0.9, target], 'color': '#dcfce7'},
+                    {'range': [target, max_axis_val], 'color': '#bbf7d0'}
+                ],
+                'threshold': {
+                    'line': {'color': "#dc2626", 'width': 4},
+                    'thickness': 0.8,
+                    'value': target
+                }
+            }
+        ))
+
+        fig.update_layout(
+            height=height,
+            margin=dict(l=25, r=25, t=50 if not is_large else 60, b=30)
+        )
+        return fig
+
+    # --- SUB-SECTION 1: MEASLES-RUBELLA (MR) ---
+    st.subheader("Response Type: Measles-Rubella (MR)")
+
+    if not df_target_raw.empty:
+        # Exact 0-indexed column mappings according to Target Sheet specs
+        # Col B (index 1): Barangay
+        # Col F (index 5): Target 6 - 59 mos
+        # Col I (index 8): Target 6 - 12 mos
+        # Col L (index 11): Target 13 - 23 mos
+        # Col O (index 14): Target 24 - 59 mos
+
+        def get_col_safe(df, idx):
+            return df.columns[idx] if len(df.columns) > idx else None
+
+        t_barangay_col = get_col_safe(df_target_raw, 1)
         t_city_col = next((c for c in df_target_raw.columns if any(k in c.lower() for k in ["city", "muni"])), None)
         t_bakuna_col = next((c for c in df_target_raw.columns if any(k in c.lower() for k in ["bakuna", "dhc", "center", "facility"])), None)
 
-        col_t_6_59 = get_target_col_by_index(df_target_raw, 5, "6 - 59")
-        col_t_6_12 = get_target_col_by_index(df_target_raw, 8, "6 - 12")
-        col_t_13_23 = get_target_col_by_index(df_target_raw, 11, "13 - 23")
-        col_t_24_59 = get_target_col_by_index(df_target_raw, 14, "24 - 59")
+        col_t_6_59 = get_col_safe(df_target_raw, 5)
+        col_t_6_12 = get_col_safe(df_target_raw, 8)
+        col_t_13_23 = get_col_safe(df_target_raw, 11)
+        col_t_24_59 = get_col_safe(df_target_raw, 14)
 
         gauge_target_df = df_target_raw.copy()
 
+        # Apply sidebar filters to target dataframe
         if selected_barangay and t_barangay_col:
             selected_bgy_clean = [str(b).strip().upper() for b in selected_barangay]
             gauge_target_df = gauge_target_df[
@@ -479,6 +537,7 @@ if not df_raw.empty:
                     gauge_target_df[t_bakuna_col].astype(str).str.strip().str.upper().isin(selected_bakuna_clean)
                 ]
 
+        # Targets per Age Group (using updated column indexes)
         t_val_6_12 = clean_numeric_sum(gauge_target_df[col_t_6_12]) if col_t_6_12 else 0
         t_val_13_23 = clean_numeric_sum(gauge_target_df[col_t_13_23]) if col_t_13_23 else 0
         t_val_24_59 = clean_numeric_sum(gauge_target_df[col_t_24_59]) if col_t_24_59 else 0
@@ -488,79 +547,41 @@ if not df_raw.empty:
         else:
             t_val_6_59 = t_val_6_12 + t_val_13_23 + t_val_24_59
 
+        # Accomplishments per Age Group (Raw Data Columns K, L, M)
         acc_val_6_12 = clean_numeric_sum(mr_df[col_mr_6_12]) if (not mr_df.empty and col_mr_6_12) else 0
         acc_val_13_23 = clean_numeric_sum(mr_df[col_mr_13_23]) if (not mr_df.empty and col_mr_13_23) else 0
         acc_val_24_59 = clean_numeric_sum(mr_df[col_mr_24_59]) if (not mr_df.empty and col_mr_24_59) else 0
         acc_val_6_59 = acc_val_6_12 + acc_val_13_23 + acc_val_24_59
 
-        def create_gauge_chart(title, accomplishment, target, height=300, font_size=14, is_large=False):
-            pct = round((accomplishment / target * 100), 1) if target > 0 else 0
-            max_axis_val = max(target, accomplishment) * 1.15 if target > 0 else 100
-
-            fig = go.Figure(go.Indicator(
-                mode="gauge+number+delta",
-                value=accomplishment,
-                number={'valueformat': ',d', 'font': {'size': 36 if is_large else 28}},
-                domain={'x': [0.05, 0.95], 'y': [0.05, 0.70]},
-                title={
-                    'text': f"<b>{title}</b><br><span style='font-size:{0.95 if is_large else 0.85}em;color:#475569'>{pct}% of Target ({target:,})</span>", 
-                    'font': {'size': font_size},
-                    'align': 'center'
-                },
-                delta={
-                    'reference': target, 
-                    'relative': False, 
-                    'valueformat': ',d', 
-                    'increasing': {'color': "#16a34a"}
-                },
-                gauge={
-                    'axis': {
-                        'range': [0, max_axis_val], 
-                        'tickwidth': 1, 
-                        'tickcolor': "#334155",
-                        'tickformat': ',d'
-                    },
-                    'bar': {'color': "#0284c7"},
-                    'bgcolor': "white",
-                    'borderwidth': 1.5,
-                    'bordercolor': "#cbd5e1",
-                    'steps': [
-                        {'range': [0, target * 0.5], 'color': '#fee2e2'},
-                        {'range': [target * 0.5, target * 0.9], 'color': '#fef3c7'},
-                        {'range': [target * 0.9, target], 'color': '#dcfce7'},
-                        {'range': [target, max_axis_val], 'color': '#bbf7d0'}
-                    ],
-                    'threshold': {
-                        'line': {'color': "#dc2626", 'width': 4},
-                        'thickness': 0.8,
-                        'value': target
-                    }
-                }
-            ))
-
-            fig.update_layout(
-                height=height,
-                margin=dict(l=25, r=25, t=50 if not is_large else 60, b=30)
-            )
-            return fig
-
         g_row1_col1, g_row1_col2, g_row1_col3 = st.columns(3)
 
         with g_row1_col1:
             st.plotly_chart(
-                create_gauge_chart("6 - 12 mos Total<br><span style='font-size:0.8em;color:#64748b'>(Acc: Col K | Target: Col I)</span>", int(acc_val_6_12), int(t_val_6_12)), 
+                create_gauge_chart(
+                    "6 - 12 mos Total<br><span style='font-size:0.8em;color:#64748b'>(Acc: Col K | Target: Col I)</span>", 
+                    int(acc_val_6_12), 
+                    int(t_val_6_12)
+                ), 
                 use_container_width=True
             )
 
         with g_row1_col2:
             st.plotly_chart(
-                create_gauge_chart("13 - 23 mos Total<br><span style='font-size:0.8em;color:#64748b'>(Acc: Col L | Target: Col L)</span>", int(acc_val_13_23), int(t_val_13_23)), 
+                create_gauge_chart(
+                    "13 - 23 mos Total<br><span style='font-size:0.8em;color:#64748b'>(Acc: Col L | Target: Col L)</span>", 
+                    int(acc_val_13_23), 
+                    int(t_val_13_23)
+                ), 
                 use_container_width=True
             )
 
         with g_row1_col3:
             st.plotly_chart(
-                create_gauge_chart("24 - 59 mos Total<br><span style='font-size:0.8em;color:#64748b'>(Acc: Col M | Target: Col O)</span>", int(acc_val_24_59), int(t_val_24_59)), 
+                create_gauge_chart(
+                    "24 - 59 mos Total<br><span style='font-size:0.8em;color:#64748b'>(Acc: Col M | Target: Col O)</span>", 
+                    int(acc_val_24_59), 
+                    int(t_val_24_59)
+                ), 
                 use_container_width=True
             )
 
@@ -579,6 +600,82 @@ if not df_raw.empty:
 
     else:
         st.info("The 'Target' worksheet could not be loaded or contains no rows.")
+
+    st.markdown("---")
+
+    # --- SUB-SECTION 2: VITAMIN A ---
+    st.subheader("Response Type: Vitamin A")
+
+    # Remarks note regarding citywide target aggregation
+    st.info("ℹ️ **Note:** Target is for the entire city of Baguio; no disaggregation per DHC or barangay.")
+
+    # Load targetVitA sheet dynamically
+    @st.cache_data(ttl=600)
+    def load_target_vit_a():
+        try:
+            url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet=targetVitA"
+            df_vit = pd.read_csv(url)
+            return df_vit
+        except Exception:
+            try:
+                alt_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&sheet=targetVitA"
+                return pd.read_csv(alt_url)
+            except Exception as e:
+                st.warning(f"Could not load 'targetVitA' sheet: {e}")
+                return pd.DataFrame()
+
+    df_target_vit_a = load_target_vit_a()
+
+    # Calculate Accomplishments from rawdata (filtered_df)
+    vit_a_acc_6_11 = clean_numeric_sum(filtered_df[col_vit_6_11]) if (not filtered_df.empty and col_vit_6_11) else 0
+    vit_a_acc_12_59 = clean_numeric_sum(filtered_df[col_vit_12_59]) if (not filtered_df.empty and col_vit_12_59) else 0
+    vit_a_acc_total = vit_a_acc_6_11 + vit_a_acc_12_59
+
+    # Retrieve Targets from targetVitA sheet (A2, B2, C2)
+    if not df_target_vit_a.empty and len(df_target_vit_a) >= 1:
+        target_vit_6_11 = clean_numeric_sum(pd.Series([df_target_vit_a.iloc[0, 0]])) if len(df_target_vit_a.columns) > 0 else 0
+        target_vit_12_59 = clean_numeric_sum(pd.Series([df_target_vit_a.iloc[0, 1]])) if len(df_target_vit_a.columns) > 1 else 0
+        target_vit_total = clean_numeric_sum(pd.Series([df_target_vit_a.iloc[0, 2]])) if len(df_target_vit_a.columns) > 2 else 0
+    else:
+        target_vit_6_11 = 0
+        target_vit_12_59 = 0
+        target_vit_total = 0
+
+    # Display Vitamin A Gauges
+    vg_col1, vg_col2 = st.columns(2)
+
+    with vg_col1:
+        st.plotly_chart(
+            create_gauge_chart(
+                "Vit A 6 - 11 mos<br><span style='font-size:0.8em;color:#64748b'>(Acc: Col Q | Target: targetVitA A2)</span>", 
+                int(vit_a_acc_6_11), 
+                int(target_vit_6_11)
+            ), 
+            use_container_width=True
+        )
+
+    with vg_col2:
+        st.plotly_chart(
+            create_gauge_chart(
+                "Vit A 12 - 59 mos<br><span style='font-size:0.8em;color:#64748b'>(Acc: Col R | Target: targetVitA B2)</span>", 
+                int(vit_a_acc_12_59), 
+                int(target_vit_12_59)
+            ), 
+            use_container_width=True
+        )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.plotly_chart(
+        create_gauge_chart(
+            "Overall Vitamin A Target (6 - 59 mos)<br><span style='font-size:0.75em;color:#64748b'>(Acc: Cols Q+R | Target: targetVitA C2)</span>", 
+            int(vit_a_acc_total), 
+            int(target_vit_total), 
+            height=420, 
+            font_size=18, 
+            is_large=True
+        ), 
+        use_container_width=True
+    )
 
     st.divider()
 
@@ -964,7 +1061,6 @@ if not df_raw.empty:
         all_target_bgys = sorted([b for b in all_target_bgys if b and b.upper() != "NAN"])
 
         if all_target_bgys:
-            # Get submitted barangays per response type from rawdata Column J
             mr_submitted_bgys = set(
                 df_raw[df_raw[col_response].astype(str).str.contains("Measles|MR", case=False, na=False)][col_barangay]
                 .dropna().astype(str).str.strip().str.upper().unique()
@@ -975,7 +1071,6 @@ if not df_raw.empty:
                 .dropna().astype(str).str.strip().str.upper().unique()
             )
 
-            # Filter options for status view
             status_filter = st.radio(
                 "Filter View:",
                 ["Show All Target Barangays", "Show Pending Only", "Show Fully Submitted Only"],
@@ -1004,7 +1099,6 @@ if not df_raw.empty:
 
             sub_df = pd.DataFrame(submission_records)
 
-            # Apply view filter
             if status_filter == "Show Pending Only":
                 sub_df_display = sub_df[sub_df["Overall Status"] != "Fully Submitted"]
             elif status_filter == "Show Fully Submitted Only":
@@ -1012,7 +1106,6 @@ if not df_raw.empty:
             else:
                 sub_df_display = sub_df.copy()
 
-            # Metric Cards
             pending_mr_cnt = sum(1 for r in submission_records if r["Measles-Rubella (MR) Status"] == "Not Yet Submitted")
             pending_vit_cnt = sum(1 for r in submission_records if r["Vitamin A Status"] == "Not Yet Submitted")
             fully_sub_cnt = sum(1 for r in submission_records if r["Overall Status"] == "Fully Submitted")
