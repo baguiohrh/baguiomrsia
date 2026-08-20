@@ -130,7 +130,7 @@ if not df_raw.empty:
     - 🗺️ [Barangay Table Heatmap](#barangay-accomplishment-table-heatmap)
     - 🥧 [Share by Barangay](#accomplishment-share-by-barangay)
     - ⚠️ [Deferral & Refusal Analysis](#deferral-and-refusal-analysis)
-    - 📋 [Pending Barangay Submissions](#pending-barangay-submissions)
+    - 📋 [Barangay Submission Status](#barangay-submission-status)
     """)
 
     st.sidebar.markdown("---")
