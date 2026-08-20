@@ -119,6 +119,28 @@ if not df_raw.empty:
     # List of dose metrics columns (Column K onwards)
     dose_cols = df_raw.columns[10:].tolist()
 
+    # =========================================================
+    # --- SIDEBAR LOGO BANNER (4 Columns, 100px Wide) ---
+    # =========================================================
+    with st.sidebar:
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            if os.path.exists("doh_seal.png"):
+                st.image("doh_seal.png", width=100)
+
+        with col2:
+            if os.path.exists("doh_car_seal.png"):
+                st.image("doh_car_seal.png", width=100)
+
+        with col3:
+            if os.path.exists("baguio_seal.png"):
+                st.image("baguio_seal.png", width=100)
+
+        with col4:
+            if os.path.exists("bagong_pilipinas.png"):
+                st.image("bagong_pilipinas.png", width=100)
+
     # --- SIDEBAR QUICK NAVIGATION LINKS ---
     st.sidebar.header("🧭 Quick Navigation")
     st.sidebar.markdown("""
