@@ -122,23 +122,23 @@ if not df_raw.empty:
     # =========================================================
     # --- SIDEBAR LOGO BANNER (4 Columns, 100px Wide) ---
     # =========================================================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-with st.sidebar:
-    col1, col2, col3, col4 = st.columns(4)
-
-    images = [
-        (col1, "doh_seal.png"),
-        (col2, "doh_car_seal.png"),
-        (col3, "baguio_seal.png"),
-        (col4, "bagong_pilipinas.png")
-    ]
-
-    for col, filename in images:
-        img_path = os.path.join(BASE_DIR, filename)
-        with col:
-            if os.path.exists(img_path):
-                st.image(img_path, use_container_width=True)
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    
+    with st.sidebar:
+        col1, col2, col3, col4 = st.columns(4)
+    
+        images = [
+            (col1, "doh_seal.png"),
+            (col2, "doh_car_seal.png"),
+            (col3, "baguio_seal.png"),
+            (col4, "bagong_pilipinas.png")
+        ]
+    
+        for col, filename in images:
+            img_path = os.path.join(BASE_DIR, filename)
+            with col:
+                if os.path.exists(img_path):
+                    st.image(img_path, use_container_width=True)
 
     # --- SIDEBAR QUICK NAVIGATION LINKS ---
     st.sidebar.header("🧭 Quick Navigation")
