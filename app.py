@@ -955,64 +955,82 @@ if not df_raw.empty:
     st.divider()
 
     # --- SECTION 8: PENDING BARANGAY SUBMISSIONS ---
-    st.header("Pending Barangay Submissions")
+    st.header("Barangay Submission Status")
 
     if not df_target_raw.empty and len(df_target_raw.columns) > 1:
-        # Extract target barangay names from Target Sheet Column B (index 1)
+        # Target Barangays from Column B (index 1)
         target_bgy_col = df_target_raw.columns[1]
         all_target_bgys = df_target_raw[target_bgy_col].dropna().astype(str).str.strip().unique().tolist()
-        
-        # Standardize target names for matching
         all_target_bgys = sorted([b for b in all_target_bgys if b and b.upper() != "NAN"])
 
         if all_target_bgys:
-            # Extract distinct Response Types from rawdata Sheet Column J (col_response)
-            response_types = sorted(df_raw[col_response].dropna().astype(str).str.strip().unique().tolist())
-            response_types = [r for r in response_types if r and r.upper() != "NAN"]
+            # Get submitted barangays per response type from rawdata Column J
+            mr_submitted_bgys = set(
+                df_raw[df_raw[col_response].astype(str).str.contains("Measles|MR", case=False, na=False)][col_barangay]
+                .dropna().astype(str).str.strip().str.upper().unique()
+            )
 
-            if response_types:
-                tabs = st.tabs([f"📌 {resp}" for resp in response_types])
+            vit_a_submitted_bgys = set(
+                df_raw[df_raw[col_response].astype(str).str.contains("Vitamin A", case=False, na=False)][col_barangay]
+                .dropna().astype(str).str.strip().str.upper().unique()
+            )
 
-                for tab, resp_type in zip(tabs, response_types):
-                    with tab:
-                        # Get barangays that HAVE submitted for this Response Type
-                        submitted_bgys = df_raw[
-                            df_raw[col_response].astype(str).str.strip() == resp_type
-                        ][col_barangay].dropna().astype(str).str.strip().unique()
+            # Filter options for status view
+            status_filter = st.radio(
+                "Filter View:",
+                ["Show All Target Barangays", "Show Pending Only", "Show Fully Submitted Only"],
+                horizontal=True
+            )
 
-                        submitted_bgys_clean = set(b.upper() for b in submitted_bgys)
+            submission_records = []
+            for bgy in all_target_bgys:
+                bgy_upper = bgy.upper()
+                has_mr = "Submitted" if bgy_upper in mr_submitted_bgys else "Not Yet Submitted"
+                has_vit_a = "Submitted" if bgy_upper in vit_a_submitted_bgys else "Not Yet Submitted"
+                
+                if has_mr == "Submitted" and has_vit_a == "Submitted":
+                    overall_status = "Fully Submitted"
+                elif has_mr == "Not Yet Submitted" and has_vit_a == "Not Yet Submitted":
+                    overall_status = "Pending (Both)"
+                else:
+                    overall_status = "Partially Submitted"
 
-                        # Determine barangays from Target sheet that have NOT submitted
-                        pending_bgys = [
-                            bgy for bgy in all_target_bgys 
-                            if bgy.upper() not in submitted_bgys_clean
-                        ]
+                submission_records.append({
+                    "Barangay Name": bgy,
+                    "Measles-Rubella (MR) Status": has_mr,
+                    "Vitamin A Status": has_vit_a,
+                    "Overall Status": overall_status
+                })
 
-                        st.markdown(f"**Total Target Barangays:** `{len(all_target_bgys)}` | "
-                                    f"**Submitted:** `{len(all_target_bgys) - len(pending_bgys)}` | "
-                                    f"**Pending:** `{len(pending_bgys)}`")
+            sub_df = pd.DataFrame(submission_records)
 
-                        if pending_bgys:
-                            pending_df = pd.DataFrame({
-                                "No.": range(1, len(pending_bgys) + 1),
-                                "Barangay Name": pending_bgys,
-                                "Response Type": resp_type,
-                                "Status": "Not Yet Submitted"
-                            })
-
-                            st.dataframe(pending_df, use_container_width=True, hide_index=True)
-
-                            st.download_button(
-                                label=f"📥 Download Pending List ({resp_type})",
-                                data=convert_df_to_csv(pending_df),
-                                file_name=f"pending_barangays_{resp_type.lower().replace(' ', '_')}.csv",
-                                mime="text/csv",
-                                key=f"download_pending_{resp_type}"
-                            )
-                        else:
-                            st.success(f"🎉 All target barangays have submitted reports for **{resp_type}**!")
+            # Apply view filter
+            if status_filter == "Show Pending Only":
+                sub_df_display = sub_df[sub_df["Overall Status"] != "Fully Submitted"]
+            elif status_filter == "Show Fully Submitted Only":
+                sub_df_display = sub_df[sub_df["Overall Status"] == "Fully Submitted"]
             else:
-                st.info("No Response Types found in rawdata sheet Column J.")
+                sub_df_display = sub_df.copy()
+
+            # Metric Cards
+            pending_mr_cnt = sum(1 for r in submission_records if r["Measles-Rubella (MR) Status"] == "Not Yet Submitted")
+            pending_vit_cnt = sum(1 for r in submission_records if r["Vitamin A Status"] == "Not Yet Submitted")
+            fully_sub_cnt = sum(1 for r in submission_records if r["Overall Status"] == "Fully Submitted")
+
+            col_p1, col_p2, col_p3 = st.columns(3)
+            col_p1.metric("Pending MR Submissions", pending_mr_cnt)
+            col_p2.metric("Pending Vitamin A Submissions", pending_vit_cnt)
+            col_p3.metric("Fully Submitted Barangays", fully_sub_cnt)
+
+            st.dataframe(sub_df_display, use_container_width=True, hide_index=True)
+
+            st.download_button(
+                label="📥 Export Submission Status Table (CSV)",
+                data=convert_df_to_csv(sub_df_display),
+                file_name="barangay_submission_status.csv",
+                mime="text/csv",
+                key="download_submission_status"
+            )
         else:
             st.info("No valid Barangay names found in Target sheet Column B.")
     else:
