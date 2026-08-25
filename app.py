@@ -1658,3 +1658,4 @@ else:
   st.warning(
       "Unable to fetch data. Please check the spreadsheet URL or permissions."
   )
+    st.warning("Unable to fetch data. Please check the spreadsheet URL or permissions.")
