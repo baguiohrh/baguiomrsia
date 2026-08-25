@@ -5,9 +5,9 @@ import plotly.graph_objects as go
 import streamlit as st
 
 # --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="BAGUIO MRSIA Accomplishment", layout="wide")
+st.set_page_config(page_title="BAGUIO SIA Accomplishment", layout="wide")
 
-st.title("BAGUIO MRSIA Accomplishment Dashboard")
+st.title("BAGUIO SIA Accomplishment Dashboard")
 
 # --- DATA LOADING ---
 SHEET_ID = "1Gh1LYOgacvRs_QwNa7xFHAGyfTzquQ0exqe3VOOYANs"
@@ -1658,4 +1658,3 @@ else:
   st.warning(
       "Unable to fetch data. Please check the spreadsheet URL or permissions."
   )
-    st.warning("Unable to fetch data. Please check the spreadsheet URL or permissions.")
