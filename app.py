@@ -1491,38 +1491,29 @@ if not df_raw.empty:
     else:
       st.info("No Deferral Reason columns found (Columns AB:AO).")
 
-  with tbl_col2:
-    st.markdown("#### Refusal Reasons")
-    ref_reason_cols = (
-        df_raw.columns[41:50].tolist() if len(df_raw.columns) >= 50 else []
-    )
-    ref_reasons_data = []
+    with tbl_col2:
+        st.markdown("#### Refusal Reasons")
+        ref_reason_cols = df_raw.columns[41:50].tolist() if len(df_raw.columns) >= 50 else []
+        ref_reasons_data = []
 
-    for col in ref_reason_cols:
-      cnt = clean_numeric_sum(filtered_df[col]) if not filtered_df.empty else 0
-      clean_name = (
-          str(col)
-          .replace("Refusal Reason -", "")
-          .replace("Refusal Reason:", "")
-          .strip()
-      )
-      def_reasons_data.append({"Refusal Reason": clean_name, "Count": int(cnt)})
+        for col in ref_reason_cols:
+            cnt = clean_numeric_sum(filtered_df[col]) if not filtered_df.empty else 0
+            clean_name = str(col).replace("Refusal Reason -", "").replace("Refusal Reason:", "").strip()
+            ref_reasons_data.append({"Refusal Reason": clean_name, "Count": int(cnt)})
 
-    if ref_reasons_data:
-      ref_reasons_df = pd.DataFrame(ref_reasons_data).sort_values(
-          by="Count", ascending=False
-      )
-      st.dataframe(ref_reasons_df, use_container_width=True, hide_index=True)
+        if ref_reasons_data:
+            ref_reasons_df = pd.DataFrame(ref_reasons_data).sort_values(by="Count", ascending=False)
+            st.dataframe(ref_reasons_df, use_container_width=True, hide_index=True)
 
-      st.download_button(
-          label="📥 Export Refusal Reasons (CSV)",
-          data=convert_df_to_csv(ref_reasons_df),
-          file_name="refusal_reasons_summary.csv",
-          mime="text/csv",
-          key="download_refusal_reasons",
-      )
-    else:
-      st.info("No Refusal Reason columns found (Columns AP:AX).")
+            st.download_button(
+                label="📥 Export Refusal Reasons (CSV)",
+                data=convert_df_to_csv(ref_reasons_df),
+                file_name="refusal_reasons_summary.csv",
+                mime="text/csv",
+                key="download_refusal_reasons"
+            )
+        else:
+            st.info("No Refusal Reason columns found (Columns AP:AX).")
 
   st.divider()
 
